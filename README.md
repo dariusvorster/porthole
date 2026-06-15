@@ -45,6 +45,7 @@ It also adds two things the runtime itself doesn't have: a **supervision layer**
 
 ```sh
 brew tap dariusvorster/porthole
+brew trust dariusvorster/porthole
 brew install porthole
 brew services start porthole
 ```
