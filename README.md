@@ -44,7 +44,7 @@ It also adds two things the runtime itself doesn't have: a **supervision layer**
 ### Homebrew (recommended)
 
 ```sh
-brew tap <you>/porthole
+brew tap dariusvorster/porthole
 brew install porthole
 brew services start porthole
 ```
@@ -63,7 +63,7 @@ portholed
 You'll need Go 1.2x and Node 20+.
 
 ```sh
-git clone https://github.com/<you>/porthole
+git clone https://github.com/dariusvorster/porthole
 cd porthole
 make build      # builds the web UI and embeds it into a single binary
 ./bin/portholed
