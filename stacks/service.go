@@ -47,8 +47,9 @@ type StackView struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	Status    string    `json:"status"` // up | degraded | down | unknown
-	Valid     bool      `json:"valid"`  // does the stored file still parse cleanly?
+	Status    string    `json:"status"`    // up | degraded | down | unknown
+	Valid     bool      `json:"valid"`     // does the stored file still parse cleanly?
+	Discovery bool      `json:"discovery"` // service-discovery opt-in (Phase 8)
 	Services  []string  `json:"services"`
 	Members   []Member  `json:"members"`
 }
@@ -73,10 +74,45 @@ func (s *Manager) Import(name string, yaml []byte) (ValidationReport, bool, erro
 	if !rep.Valid {
 		return rep, false, nil
 	}
-	if err := s.store.SaveStack(Record{Name: name, ComposeYAML: string(yaml)}); err != nil {
+	rec := Record{Name: name, ComposeYAML: string(yaml)}
+	// Preserve the discovery toggle across a re-import (it's a separate decision
+	// from editing the compose file).
+	if existing, ok, _ := s.store.GetStack(name); ok {
+		rec.Discovery = existing.Discovery
+	}
+	if err := s.store.SaveStack(rec); err != nil {
 		return rep, false, err
 	}
 	return rep, true, nil
+}
+
+// SetDiscovery flips a stack's service-discovery opt-in (Phase 8). The DB is
+// working truth; the controller picks the change up on the next reconcile cycle
+// (injecting peers when turned on, stripping the managed block when turned off).
+// ok=false if the stack is unknown.
+func (s *Manager) SetDiscovery(name string, on bool) (bool, error) {
+	rec, ok, err := s.store.GetStack(name)
+	if err != nil || !ok {
+		return ok, err
+	}
+	rec.Discovery = on
+	return true, s.store.SaveStack(rec)
+}
+
+// DiscoveryFlags returns name→discovery for every stored stack. The discovery
+// controller's caller consults this so the DB stays authoritative (a stored
+// record overrides a stale create-time label); unknown stacks fall back to the
+// label. Best-effort: an empty map on a store error (controller leaves hosts as-is).
+func (s *Manager) DiscoveryFlags() map[string]bool {
+	recs, err := s.store.ListStacks()
+	if err != nil {
+		return map[string]bool{}
+	}
+	out := make(map[string]bool, len(recs))
+	for _, r := range recs {
+		out[r.Name] = r.Discovery
+	}
+	return out
 }
 
 // List returns every stored stack with its live status + members (best-effort:
@@ -107,7 +143,7 @@ func (s *Manager) Get(ctx context.Context, name string) (StackView, bool, error)
 
 func (s *Manager) viewFor(r Record, observed []engine.Container, obsOK bool) StackView {
 	stack, rep := Parse(r.Name, []byte(r.ComposeYAML))
-	v := StackView{Name: r.Name, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Valid: rep.Valid}
+	v := StackView{Name: r.Name, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, Valid: rep.Valid, Discovery: r.Discovery}
 	for _, svc := range stack.Services {
 		v.Services = append(v.Services, svc.Name)
 	}
@@ -133,7 +169,7 @@ func (s *Manager) Plan(ctx context.Context, name string) (Plan, bool, error) {
 
 // Up / Down / Restart load the stored stack and apply through the executor.
 func (s *Manager) Up(ctx context.Context, name string) (UpResult, bool, error) {
-	stack, ok, err := s.loadValid(name)
+	stack, ok, err := s.loadValidWithDiscovery(name)
 	if err != nil || !ok {
 		return UpResult{}, ok, err
 	}
@@ -191,6 +227,22 @@ func (s *Manager) loadValid(name string) (Stack, bool, error) {
 	if !rep.Valid {
 		return Stack{}, true, fmt.Errorf("%w: %v", ErrStackInvalid, rep.Errors)
 	}
+	return stack, true, nil
+}
+
+// loadValidWithDiscovery is loadValid plus the stored discovery flag stamped onto
+// the parsed Stack, so Up labels new members for service discovery. Only Up needs
+// it — restart/down don't recreate members, so their labels are untouched.
+func (s *Manager) loadValidWithDiscovery(name string) (Stack, bool, error) {
+	r, ok, err := s.store.GetStack(name)
+	if err != nil || !ok {
+		return Stack{}, ok, err
+	}
+	stack, rep := Parse(r.Name, []byte(r.ComposeYAML))
+	if !rep.Valid {
+		return Stack{}, true, fmt.Errorf("%w: %v", ErrStackInvalid, rep.Errors)
+	}
+	stack.Discovery = r.Discovery
 	return stack, true, nil
 }
 

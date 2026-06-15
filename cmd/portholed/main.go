@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/porthole/porthole/discovery"
 	"github.com/porthole/porthole/engine"
 	"github.com/porthole/porthole/httpapi"
 	"github.com/porthole/porthole/idlock"
@@ -92,12 +93,24 @@ func main() {
 		}
 	}
 	sup := supervisor.New(store, eng, hub, locks, supCfg, log.Default())
-	hub.SetOnCycle(sup.OnCycle)     // must be set before Run
-	hub.SetOnRemoved(sup.OnRemoved) // prune policy rows when a container is removed
 
 	// Stacks (Phase 4): shares the per-id lock + the supervision SQLite db, and
-	// drives the runtime through the same engine.
+	// drives the runtime through the same engine. Created before the onCycle wiring
+	// so service discovery can consult its per-stack opt-in flags each cycle.
 	stackMgr := stacks.NewManager(openStackStore(store), eng, locks)
+
+	// Service discovery (Phase 8): converges discovery-enabled stack members'
+	// /etc/hosts from the SAME reconcile poll (no new loop). Shares the per-id lock
+	// so an injection never races a supervisor restart on the same container.
+	disco := discovery.NewController(eng, locks, log.Default(), 750*time.Millisecond)
+
+	// Both supervision and discovery consume the per-cycle container list; the hub
+	// has a single onCycle slot, so fan out to both here.
+	hub.SetOnCycle(func(cs []engine.Container) {
+		sup.OnCycle(cs)
+		disco.OnCycle(ctx, toSnapshots(cs, stackMgr.DiscoveryFlags()))
+	})
+	hub.SetOnRemoved(sup.OnRemoved) // prune policy rows when a container is removed
 
 	go hub.Run(ctx)
 
@@ -149,6 +162,36 @@ func main() {
 	if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// toSnapshots adapts the runtime's container list into the discovery controller's
+// import-pure view: stack membership, the live dedicated IP, and running state.
+// IPs are read fresh every cycle — never cached (they churn on restart).
+//
+// Enablement is DB-authoritative: when the stack has a stored record, dbFlags
+// decides (so a toggle-off overrides a stale create-time label); only when the
+// stack is unknown to the store (e.g. after a DB loss) do we fall back to the
+// porthole.discovery label.
+func toSnapshots(cs []engine.Container, dbFlags map[string]bool) []discovery.Snapshot {
+	out := make([]discovery.Snapshot, 0, len(cs))
+	for _, c := range cs {
+		lbl := c.Configuration.Labels
+		stack := lbl[stacks.LabelStack]
+		on, known := dbFlags[stack]
+		if !known {
+			on = lbl[stacks.LabelDiscovery] == "on"
+		}
+		out = append(out, discovery.Snapshot{
+			ID:        c.ID,
+			Stack:     stack,
+			Service:   lbl[stacks.LabelService],
+			Discovery: on,
+			IP:        c.PrimaryIPv4(),
+			Running:   c.IsRunning(),
+			Started:   c.Status.StartedDate.Format(time.RFC3339),
+		})
+	}
+	return out
 }
 
 // majorVersion parses the leading integer of a semver ("1.0.0" -> 1), or -1 if

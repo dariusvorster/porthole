@@ -17,6 +17,12 @@ type Stack struct {
 	Services []Service // sorted by Name for deterministic plans/output
 	Volumes  []string  // declared top-level named volumes
 	Networks []string  // declared top-level networks (v1 uses one per-stack net; see spec §9.2)
+
+	// Discovery is a transient flag set by the Manager from the stored Record
+	// before an Up — Parse never sets it (compose has no such field). When true,
+	// members get the porthole.discovery=on label so service discovery (Phase 8)
+	// injects peers' /etc/hosts.
+	Discovery bool
 }
 
 // Service is one declared service. Restart maps to a supervision label; the rest

@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { MutationError, downStack, importStack, planStack, restartStack, upStack, validateStack } from '../api/rest'
+import {
+  MutationError,
+  downStack,
+  importStack,
+  planStack,
+  restartStack,
+  setStackDiscovery,
+  upStack,
+  validateStack,
+} from '../api/rest'
 import type { StackActionKind, StackPlan, StackView, ValidationReport } from '../api/types'
 import { showToast } from '../lib/toast'
 import { EmptyState } from './EmptyState'
@@ -275,6 +284,15 @@ function StackDetail({ stack, onChanged }: { stack: StackView; onChanged: () => 
             stored file invalid
           </span>
         )}
+        {stack.discovery && (
+          <span
+            className="rounded bg-status-running/10 px-1.5 py-0.5 font-mono text-2xs text-status-running"
+            title="Members resolve each other by service name via injected /etc/hosts"
+            data-testid="discovery-indicator"
+          >
+            discovery on
+          </span>
+        )}
       </div>
 
       {/* Actions */}
@@ -321,7 +339,34 @@ function StackDetail({ stack, onChanged }: { stack: StackView; onChanged: () => 
         >
           plan
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            run(
+              'discovery',
+              () => setStackDiscovery(stack.name, !stack.discovery),
+              `Service discovery ${stack.discovery ? 'off' : 'on'} for ${stack.name}`,
+            )
+          }
+          disabled={busy === 'discovery'}
+          title="Toggle name-based resolution between this stack's services"
+          data-testid="discovery-toggle"
+          className={[
+            'ml-auto rounded border-hairline px-2 py-0.5 font-mono text-2xs disabled:opacity-40',
+            stack.discovery
+              ? 'border-status-running/50 bg-status-running/10 text-status-running hover:bg-status-running/20'
+              : 'border-neutral-300/70 hover:bg-neutral-50 dark:border-neutral-700/70 dark:hover:bg-neutral-900/40',
+          ].join(' ')}
+        >
+          {busy === 'discovery' ? 'saving…' : stack.discovery ? 'discovery: on' : 'discovery: off'}
+        </button>
       </div>
+      {stack.discovery && (
+        <p className="font-mono text-2xs text-neutral-500">
+          Services reach each other by name — e.g. <code>http://{(stack.services ?? [])[0] ?? 'api'}</code>. Porthole
+          keeps each member's <code>/etc/hosts</code> updated as IPs change on restart.
+        </p>
+      )}
 
       {error && <div className="font-mono text-2xs text-status-danger">{error}</div>}
 

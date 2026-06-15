@@ -12,9 +12,10 @@ import (
 // prove membership, and `container ls` is observed truth. Re-discover members
 // from labels every reconcile — never trust the DB alone.
 const (
-	LabelStack   = "porthole.stack"
-	LabelService = "porthole.service"
-	LabelRestart = "porthole.restart" // mirrors supervision's restart label
+	LabelStack     = "porthole.stack"
+	LabelService   = "porthole.service"
+	LabelRestart   = "porthole.restart"   // mirrors supervision's restart label
+	LabelDiscovery = "porthole.discovery" // "on" → inject peers' /etc/hosts (Phase 8)
 )
 
 // ActionKind is one per-service action in a reconcile Plan.

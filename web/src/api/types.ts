@@ -251,6 +251,7 @@ export interface StackView {
   updatedAt: string
   status: string // up | degraded | down | unknown
   valid: boolean
+  discovery: boolean // service-discovery opt-in (Phase 8): members resolve peers by name
   services: string[] | null
   members: StackMember[] | null
 }

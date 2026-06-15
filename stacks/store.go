@@ -3,6 +3,7 @@ package stacks
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +15,7 @@ import (
 type Record struct {
 	Name        string    `json:"name"`
 	ComposeYAML string    `json:"composeYaml"`
+	Discovery   bool      `json:"discovery"` // service discovery opt-in (Phase 8); DB is working truth
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -47,6 +49,12 @@ func NewSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
 	`); err != nil {
 		return nil, err
 	}
+	// Migration: add the discovery column to a pre-Phase-8 table. CREATE IF NOT
+	// EXISTS won't add columns, so ALTER and ignore the "duplicate column" error.
+	if _, err := db.Exec(`ALTER TABLE stacks ADD COLUMN discovery INTEGER NOT NULL DEFAULT 0`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return nil, err
+	}
 	return &SQLiteStore{db: db}, nil
 }
 
@@ -59,20 +67,29 @@ func (s *SQLiteStore) SaveStack(r Record) error {
 	}
 	// Preserve the original created_at on update; only refresh updated_at.
 	_, err := s.db.Exec(`
-		INSERT INTO stacks (name, compose_yaml, created_at, updated_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO stacks (name, compose_yaml, discovery, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET
 			compose_yaml = excluded.compose_yaml,
+			discovery    = excluded.discovery,
 			updated_at   = excluded.updated_at
-	`, r.Name, r.ComposeYAML, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339))
+	`, r.Name, r.ComposeYAML, boolToInt(r.Discovery), r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339))
 	return err
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (s *SQLiteStore) GetStack(name string) (Record, bool, error) {
 	var yaml, created, updated string
+	var disc int
 	err := s.db.QueryRow(
-		`SELECT compose_yaml, created_at, updated_at FROM stacks WHERE name = ?`, name,
-	).Scan(&yaml, &created, &updated)
+		`SELECT compose_yaml, discovery, created_at, updated_at FROM stacks WHERE name = ?`, name,
+	).Scan(&yaml, &disc, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
@@ -81,11 +98,11 @@ func (s *SQLiteStore) GetStack(name string) (Record, bool, error) {
 	}
 	c, _ := time.Parse(time.RFC3339, created)
 	u, _ := time.Parse(time.RFC3339, updated)
-	return Record{Name: name, ComposeYAML: yaml, CreatedAt: c, UpdatedAt: u}, true, nil
+	return Record{Name: name, ComposeYAML: yaml, Discovery: disc != 0, CreatedAt: c, UpdatedAt: u}, true, nil
 }
 
 func (s *SQLiteStore) ListStacks() ([]Record, error) {
-	rows, err := s.db.Query(`SELECT name, compose_yaml, created_at, updated_at FROM stacks ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, compose_yaml, discovery, created_at, updated_at FROM stacks ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -93,12 +110,13 @@ func (s *SQLiteStore) ListStacks() ([]Record, error) {
 	var out []Record
 	for rows.Next() {
 		var name, yaml, created, updated string
-		if err := rows.Scan(&name, &yaml, &created, &updated); err != nil {
+		var disc int
+		if err := rows.Scan(&name, &yaml, &disc, &created, &updated); err != nil {
 			return nil, err
 		}
 		c, _ := time.Parse(time.RFC3339, created)
 		u, _ := time.Parse(time.RFC3339, updated)
-		out = append(out, Record{Name: name, ComposeYAML: yaml, CreatedAt: c, UpdatedAt: u})
+		out = append(out, Record{Name: name, ComposeYAML: yaml, Discovery: disc != 0, CreatedAt: c, UpdatedAt: u})
 	}
 	return out, rows.Err()
 }

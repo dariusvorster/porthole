@@ -186,6 +186,24 @@ export function deleteStack(name: string): Promise<void> {
   return mutate(`/api/stacks/${id(name)}`, 'DELETE')
 }
 
+/** Toggle service discovery (Phase 8) for a stack. The controller injects/strips
+ * peers' /etc/hosts on the next reconcile cycle. Throws MutationError on non-2xx. */
+export async function setStackDiscovery(name: string, enabled: boolean): Promise<void> {
+  const res = await fetch(`/api/stacks/${id(name)}/discovery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+  if (res.ok) return
+  let err: ApiError | undefined
+  try {
+    err = (await res.json()) as ApiError
+  } catch {
+    /* non-JSON */
+  }
+  throw new MutationError(err?.error ?? { kind: 'unknown', message: `request failed (${res.status})` })
+}
+
 // --- resources / disk (Phase 6) --------------------------------------------
 
 export function getResources(): Promise<ResourceBundle> {

@@ -236,6 +236,25 @@ headless portholed can't show the dialog, so the pull sits at [0/N] forever.
   Settings hint; docs. Reuse the create stream's context-cancel for teardown.
 - Configurable: PORTHOLE_PULL_STALL_SECS (default ~25).
 
+## Service discovery (Phase 8 / v2) — stack name resolution via /etc/hosts
+Stack services resolve peers by name. Captures forced exec-based /etc/hosts
+injection: no --add-host, no DNS A-records (NXDOMAIN even with a domain), no
+--hostname. /etc/hosts is WIPED to self on every start; peer IPs churn. So:
+- Re-inject the FULL peer set on EVERY member start (file is self-only at boot),
+  and re-inject the started member's new IP into every running peer.
+- Idempotent marked block: "# >>> porthole-managed (stack: X)" … "# <<<" —
+  strip-and-replace wholesale each time (no append; no growth; no stale lines).
+  Write both bare name (api) and namespaced (stack-api). Skip self.
+- Convergence loop driven by the reconcile hub's start/stop signals (same source
+  logs/supervision use). Settles as members come up. Debounce per-member churn.
+- Best-effort + idempotent retry on next cycle; NEVER fatal, never wedges a stack.
+  Single atomic write (cat > /etc/hosts of the full merged file). Share idlock so
+  injection never races a supervisor restart on the same container.
+- Same-stack peers only (porthole.stack/service labels). Opt-in per stack
+  (porthole.discovery=on), OFF by default. Toggle off → strip the managed block.
+- Pure core: computeHostsBlock / mergeHosts / planInjections (table-tested). Exec
+  + hub subscription + debounce + idlock are thin I/O around it.
+
 ---
 
 # context-mode — MANDATORY routing rules

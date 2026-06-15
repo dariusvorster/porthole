@@ -316,6 +316,9 @@ func runSpecFor(stack Stack, svc Service) engine.RunSpec {
 	if svc.Restart != "" && svc.Restart != RestartNo {
 		labels[LabelRestart] = svc.Restart
 	}
+	if stack.Discovery {
+		labels[LabelDiscovery] = "on" // durable backup; the DB record is working truth
+	}
 
 	spec := engine.RunSpec{
 		Name:    containerName(stack.Name, svc.Name),

@@ -132,6 +132,33 @@ func (s *Server) handleStackRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// POST /api/stacks/{name}/discovery — toggle service discovery (Phase 8). Writes
+// the DB flag (working truth); the discovery controller injects/strips peers'
+// /etc/hosts on the next reconcile cycle. Gated + browser-guarded like every
+// mutation.
+func (s *Server) handleStackDiscovery(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorEnvelope{Error: errorBody{
+			Kind: string(engine.ErrUnknownOption), Message: "invalid JSON body",
+		}})
+		return
+	}
+	ok, err := s.stacks.SetDiscovery(r.PathValue("name"), body.Enabled)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !ok {
+		writeStackNotFound(w, r.PathValue("name"))
+		return
+	}
+	s.emitStack(r.Context(), r.PathValue("name")) // nudges the UI to refetch the flag
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // DELETE /api/stacks/{name} — remove the stored definition only (never the
 // running containers; the caller must `down` first).
 func (s *Server) handleStackDelete(w http.ResponseWriter, r *http.Request) {

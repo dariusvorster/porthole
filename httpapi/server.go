@@ -217,6 +217,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("POST /api/stacks/{name}/up", s.gate(s.handleStackUp))
 		s.mux.HandleFunc("POST /api/stacks/{name}/down", s.gate(s.handleStackDown))
 		s.mux.HandleFunc("POST /api/stacks/{name}/restart", s.gate(s.handleStackRestart))
+		s.mux.HandleFunc("POST /api/stacks/{name}/discovery", s.gate(s.handleStackDiscovery))
 	}
 
 	// Embedded SPA — lowest-priority catch-all. The specific /api/* and /healthz
