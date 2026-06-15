@@ -98,6 +98,9 @@ nothing else to deploy.
 - **Reclaim disk** — manage images, volumes, and networks with a preview-then-apply prune.
   Porthole surfaces the **anonymous-volume leak** (orphaned volumes the runtime never
   cleans up on `--rm`) that's otherwise invisible, and reclaims it in one click.
+- **Authenticate** — log in to private registries (Docker Hub and others) from the
+  UI so private images pull. Your token is piped straight to `container` and never
+  stored by Porthole; the runtime owns the credential.
 
 ![Inspector with logs, exec, and supervision badges](docs/screenshots/inspector.png)
 
