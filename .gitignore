@@ -1,0 +1,41 @@
+# Build output
+bin/
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# macOS / editor cruft
+.DS_Store
+
+# npm debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime SQLite store (supervision policies, stacks, restart counts) — NEVER commit
+*.db
+
+# Embedded SPA: the built assets are generated; only the placeholder index.html is
+# tracked so `go build` works on a fresh clone (the go:embed source must exist).
+httpapi/dist/*
+!httpapi/dist/index.html
+
+# Playwright screenshot/snapshot artifacts that litter the repo from build/verify
+# runs. (The curated docs/screenshots/ images are NOT ignored — they're committed.)
+.playwright-mcp/
+b*-*.png
+c*-*.png
+v*-*.png
+e4-*.png
+l4-*.png
+p*-*.png
+st5-*.png
+cr5-*.png
+res-*.png
+pf-*.png
+sweep-*.png
+filt-*.png
+dbg-*.png
+topbar-*.png
+*.tsbuildinfo

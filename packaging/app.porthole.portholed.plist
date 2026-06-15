@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>app.porthole.portholed</string>
+
+  <!-- LaunchAgent: runs as the logged-in USER, not root. portholed shells the
+       per-user `container` CLI, so it must run with the user's identity (and the
+       SQLite store lives under the user's ~/Library/Application Support). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/portholed</string>
+    <!-- launchd's PATH is minimal, so the container binary is given absolutely. -->
+    <string>-container-bin</string>
+    <string>/usr/local/bin/container</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <!-- Replace USERNAME with your short user name. The Logs/porthole directory
+       must exist (mkdir -p ~/Library/Logs/porthole) — launchd will not create it. -->
+  <key>StandardOutPath</key>
+  <string>/Users/USERNAME/Library/Logs/porthole/portholed.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USERNAME/Library/Logs/porthole/portholed.log</string>
+</dict>
+</plist>
