@@ -350,6 +350,11 @@ export interface CreateSpec {
 export type CreateEvent =
   | { kind: 'progress'; index: number; total: number; phase: string }
   | { kind: 'created'; id: string }
+  // pull_stalled (Phase 7b): the watchdog cancelled a pull stuck at the initial
+  // phase — almost always a one-time macOS keychain authorization the headless
+  // daemon can't surface. Distinct from `error`: hedged, with the image ref so the
+  // UI can build the exact `container image pull <ref>` fix command.
+  | { kind: 'stalled'; image: string; message: string }
   | { kind: 'error'; error: { kind: string; message: string; raw?: string } }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +405,17 @@ export interface PrunePlan {
 export interface PruneResult {
   reclaimed: string
   removed: string[] | null
+}
+
+// ---------------------------------------------------------------------------
+// Registry login (Phase 7) — `GET /api/registry`. Host + username only; the
+// credential lives in the runtime's store, never here.
+// ---------------------------------------------------------------------------
+
+export interface RegistryAuth {
+  host: string
+  username: string
+  created: string
 }
 
 // ---------------------------------------------------------------------------

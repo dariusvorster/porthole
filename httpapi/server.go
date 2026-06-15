@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,6 +43,15 @@ type Config struct {
 	// Resources, when non-nil, enables the Resources/Disk endpoints (Phase 6).
 	// *engine.CLIEngine satisfies it.
 	Resources ResourceEngine
+	// Registry, when non-nil, enables the registry login endpoints (Phase 7).
+	// *engine.CLIEngine satisfies it.
+	Registry RegistryEngine
+	// PullStallTimeout caps how long a create/pull may sit at the INITIAL phase
+	// ([0/N]) with no progress before the watchdog declares it stalled — almost
+	// always a macOS keychain authorization the headless daemon can't surface
+	// (Phase 7b) — cancels the child, and emits a typed pull_stalled event. <=0
+	// reads PORTHOLE_PULL_STALL_SECS (default 25s). Tests set a small value.
+	PullStallTimeout time.Duration
 }
 
 // Server is the localhost HTTP surface over an Engine.
@@ -74,6 +85,12 @@ type Server struct {
 
 	// Resources / disk (Phase 6).
 	res ResourceEngine
+
+	// Registry login (Phase 7).
+	registry RegistryEngine
+
+	// Keychain-stall watchdog timeout for the create/pull stream (Phase 7b).
+	pullStall time.Duration
 }
 
 // New builds a Server. The returned handler already has security middleware
@@ -81,6 +98,9 @@ type Server struct {
 func New(eng engine.Engine, cfg Config) *Server {
 	if cfg.HealthTTL <= 0 {
 		cfg.HealthTTL = 2 * time.Second
+	}
+	if cfg.PullStallTimeout <= 0 {
+		cfg.PullStallTimeout = pullStallFromEnv()
 	}
 	locks := cfg.Locks
 	if locks == nil {
@@ -90,7 +110,8 @@ func New(eng engine.Engine, cfg Config) *Server {
 		eng: eng, hub: cfg.Hub, mux: http.NewServeMux(), healthTTL: cfg.HealthTTL,
 		locks: locks, sup: cfg.Supervision,
 		logs: newLogRegistry(), logWatcher: cfg.LogWatcher,
-		stacks: cfg.Stacks, creator: cfg.Creator, res: cfg.Resources,
+		stacks: cfg.Stacks, creator: cfg.Creator, res: cfg.Resources, registry: cfg.Registry,
+		pullStall: cfg.PullStallTimeout,
 	}
 	s.routes()
 
@@ -101,6 +122,22 @@ func New(eng engine.Engine, cfg Config) *Server {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
+
+// pullStallFromEnv reads PORTHOLE_PULL_STALL_SECS (whole seconds), defaulting to
+// 25s. A garbage or non-positive value falls back to the default rather than
+// disabling the watchdog.
+func pullStallFromEnv() time.Duration {
+	const def = 25 * time.Second
+	v := os.Getenv("PORTHOLE_PULL_STALL_SECS")
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return time.Duration(n) * time.Second
+}
 
 func (s *Server) routes() {
 	// Porthole's own liveness — never gated, never touches the runtime.
@@ -146,6 +183,15 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("DELETE /api/images", s.gate(s.handleImageDelete))
 		s.mux.HandleFunc("POST /api/images/tag", s.gate(s.handleImageTag))
 		s.mux.HandleFunc("POST /api/images/pull", s.gate(s.handleImagePull))
+	}
+
+	// Registry login (Phase 7) — the secret-handling feature. Gated + browser-
+	// guarded like every mutation; the login handler additionally never logs the
+	// body / never echoes the token (see registry.go). Registered only when wired.
+	if s.registry != nil {
+		s.mux.HandleFunc("GET /api/registry", s.gate(s.handleRegistryList))
+		s.mux.HandleFunc("POST /api/registry/login", s.gate(s.handleRegistryLogin))
+		s.mux.HandleFunc("POST /api/registry/logout", s.gate(s.handleRegistryLogout))
 	}
 
 	// Container mutations (Phase 1). Behind the bootstrap gate (503 when the

@@ -196,6 +196,46 @@ Manage images, volumes, networks + reclaim disk. Rules:
 - Reuse: df stream (summary), Stacks net engine, create pull-progress. A
   resourceEpoch SSE nudge after mutations; lists refresh on demand, not a new poll.
 
+## Registry login (Phase 7 / v2) — FIRST secret-handling feature
+Lets the user authenticate to a registry from the UI so private images pull.
+container owns the credential; Porthole is a safe front-end. INVARIANTS:
+- Token over STDIN only (container registry login --password-stdin -u <user>
+  <host>) — NEVER as an argument (process list / history / logs would leak it).
+  The engine takes the token as an io.Reader piped to stdin, never a string arg.
+- Porthole NEVER stores the token — not in SQLite, not a file, not a cache. Hold
+  it only long enough to pipe to the child's stdin, then drop it. The credential
+  lives in container's own store (registry list shows it persisted).
+- Token NEVER in a log line, response body, or error message. The login handler
+  must not log its request body; the error is a FIXED friendly message, never
+  echoed stderr (which could contain supplied input). Raw is scrubbed (empty).
+- registry list --format json → [{id,name(host),username,creationDate,
+  modificationDate,labels}] — host+username only, no secret. Read for STATE.
+- registry logout <host> drops the login. Host normalize: docker.io →
+  registry-1.docker.io (what name/id report); display registry-1.docker.io as
+  "Docker Hub".
+- SSO/2FA accounts need a Personal Access Token used AS the password → the UI
+  field is "password or access token" with an SSO hint + token-page link.
+- Login is a mutation: gated + browser-guarded like every write, PLUS the
+  never-log/store/echo rules. New Settings view hosts it; create-error nudges to it.
+
+## Keychain-stall handling (Phase 7b / v2) — completes registry login
+A logged-in user's first PRIVATE pull hangs: the container-core-images helper
+reads the credential from the macOS keychain and macOS prompts the SecurityAgent;
+headless portholed can't show the dialog, so the pull sits at [0/N] forever.
+- Porthole does NOT fix the keychain (can't without the login password + touching
+  the credential — breaks the invariant). It detects the stall, kills the pull,
+  and shows the one-time fix: run `container image pull <ref>` in Terminal once,
+  click "Always Allow"; thereafter headless pulls read silently (ACL grant is on
+  the keychain item, keyed to the helper's signature, not the caller).
+- Stall SIGNATURE = still at initial phase [0/N] + no first progress line after a
+  timeout. A slow mid-pull (early progress then quiet) is NOT a stall — do not trip
+  on "any gap," only on "no progress while still at phase 0." Hedged wording
+  ("appears stalled / likely keychain"), never "failed."
+- Pieces: server watchdog → typed pull_stalled event; create-form actionable
+  message with the real image ref + Always Allow + retry; proactive post-login
+  Settings hint; docs. Reuse the create stream's context-cancel for teardown.
+- Configurable: PORTHOLE_PULL_STALL_SECS (default ~25).
+
 ---
 
 # context-mode — MANDATORY routing rules

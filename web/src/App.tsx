@@ -22,6 +22,7 @@ import { HostRail } from './components/HostRail'
 import { Inspector } from './components/Inspector'
 import { ListView } from './components/ListView'
 import { ResourcesView } from './components/ResourcesView'
+import { SettingsView } from './components/SettingsView'
 import { StacksView } from './components/StacksView'
 import { Toaster } from './components/Toaster'
 import { TopBar, type View } from './components/TopBar'
@@ -167,6 +168,8 @@ export default function App() {
               <StacksView stacks={stacks} onChanged={refreshStacks} />
             ) : view === 'resources' ? (
               <ResourcesView bundle={resources} liveDiskUsage={diskUsage} onChanged={refreshResources} />
+            ) : view === 'settings' ? (
+              <SettingsView />
             ) : list.length === 0 ? (
               <EmptyState
                 title="No containers yet"
@@ -195,7 +198,7 @@ export default function App() {
               </div>
             )}
           </main>
-          {view !== 'stacks' && view !== 'resources' && selectedId && (
+          {view !== 'stacks' && view !== 'resources' && view !== 'settings' && selectedId && (
             <Inspector
               container={selected}
               sample={selectedSample}
@@ -216,6 +219,10 @@ export default function App() {
           networks={networks}
           onClose={() => setShowCreate(false)}
           onCreated={() => setShowCreate(false)}
+          onOpenRegistry={() => {
+            setShowCreate(false)
+            setView('settings')
+          }}
         />
       )}
 

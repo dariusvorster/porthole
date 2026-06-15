@@ -1,6 +1,6 @@
 import type { RefObject } from 'react'
 
-export type View = 'topology' | 'list' | 'stacks' | 'resources'
+export type View = 'topology' | 'list' | 'stacks' | 'resources' | 'settings'
 
 interface TopBarProps {
   version: string
@@ -76,7 +76,7 @@ export function TopBar({ version, view, onViewChange, onRun, query, onQueryChang
           aria-label="view"
           className="flex overflow-hidden rounded border-hairline border-neutral-300/70 dark:border-neutral-700/70"
         >
-          {(['topology', 'list', 'stacks', 'resources'] as const).map((v) => (
+          {(['topology', 'list', 'stacks', 'resources', 'settings'] as const).map((v) => (
             <button
               key={v}
               type="button"

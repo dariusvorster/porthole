@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/porthole/porthole/engine"
 	"github.com/porthole/porthole/supervisor"
@@ -171,6 +172,135 @@ func TestCreateGatedWhenDaemonDown(t *testing.T) {
 	srv.ServeHTTP(rec, postJSON("/api/containers", `{"image":"nginx"}`))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503", rec.Code)
+	}
+}
+
+// --- keychain-stall watchdog (Phase 7b) ----------------------------------
+
+// scriptStep is one timed RunUpdate for scriptCreator.
+type scriptStep struct {
+	after  time.Duration
+	update engine.RunUpdate
+}
+
+// scriptCreator drives RunStream with realistic timing for the watchdog tests:
+// it emits each step after its delay, then (blockUntilCtx) waits for the request
+// context to be cancelled and emits a context-kill error — exactly what the real
+// RunStream does when the watchdog cancels the child.
+type scriptCreator struct {
+	steps         []scriptStep
+	blockUntilCtx bool
+}
+
+func (f *scriptCreator) RunStream(ctx context.Context, _ engine.RunSpec) <-chan engine.RunUpdate {
+	ch := make(chan engine.RunUpdate)
+	go func() {
+		defer close(ch)
+		for _, st := range f.steps {
+			select {
+			case <-time.After(st.after):
+			case <-ctx.Done():
+				return
+			}
+			select {
+			case ch <- st.update:
+			case <-ctx.Done():
+				return
+			}
+		}
+		if f.blockUntilCtx {
+			<-ctx.Done()
+			ch <- engine.RunUpdate{Kind: "error", Err: ctx.Err()}
+		}
+	}()
+	return ch
+}
+
+func (f *scriptCreator) ImageList(context.Context) ([]engine.Image, error) { return nil, nil }
+
+var _ CreateEngine = (*scriptCreator)(nil)
+
+func stallServer(cr CreateEngine, timeout time.Duration) *Server {
+	return New(upEngine(), Config{
+		AllowedHosts:     []string{"127.0.0.1:9191", "localhost:9191"},
+		AllowedOrigins:   []string{"http://127.0.0.1:9191"},
+		Creator:          cr,
+		Supervision:      &recordingSup{},
+		PullStallTimeout: timeout,
+	})
+}
+
+func TestCreateStallEmitsPullStalledAndCancels(t *testing.T) {
+	// No progress ever arrives; the stream blocks until the watchdog cancels it.
+	cr := &scriptCreator{blockUntilCtx: true}
+	srv := stallServer(cr, 30*time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, postJSON("/api/containers", `{"image":"registry.example.com/private/app:1"}`))
+
+	out := rec.Body.String()
+	if !strings.Contains(out, "event: pull_stalled") {
+		t.Errorf("expected pull_stalled event: %s", out)
+	}
+	if !strings.Contains(out, `registry.example.com/private/app:1`) {
+		t.Errorf("pull_stalled must carry the image ref: %s", out)
+	}
+	// The cancel-induced error must NOT surface as a hard failure to the user.
+	if strings.Contains(out, "event: error") {
+		t.Errorf("must not emit error after a stall: %s", out)
+	}
+	if strings.Contains(out, "event: created") {
+		t.Errorf("must not emit created on a stall: %s", out)
+	}
+}
+
+func TestCreateSlowPullDoesNotStall(t *testing.T) {
+	// The false-positive guard: one early progress line, then a long quiet gap
+	// (> timeout) before completion. Because the pull LEFT phase 0, it is exempt.
+	cr := &scriptCreator{steps: []scriptStep{
+		{after: 5 * time.Millisecond, update: engine.RunUpdate{Kind: "progress", Index: 1, Total: 6, Phase: "Fetching image"}},
+		{after: 80 * time.Millisecond, update: engine.RunUpdate{Kind: "created", ID: "slow"}},
+	}}
+	srv := stallServer(cr, 30*time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, postJSON("/api/containers", `{"image":"nginx","name":"slow"}`))
+
+	out := rec.Body.String()
+	if strings.Contains(out, "pull_stalled") {
+		t.Errorf("a slow pull past phase 0 must NOT trip the watchdog: %s", out)
+	}
+	if !strings.Contains(out, "event: created") || !strings.Contains(out, `"id":"slow"`) {
+		t.Errorf("slow pull should still complete: %s", out)
+	}
+}
+
+func TestCreateFastPullNeverStalls(t *testing.T) {
+	cr := &scriptCreator{steps: []scriptStep{
+		{after: time.Millisecond, update: engine.RunUpdate{Kind: "progress", Index: 1, Total: 6, Phase: "Fetching image"}},
+		{after: time.Millisecond, update: engine.RunUpdate{Kind: "created", ID: "fast"}},
+	}}
+	srv := stallServer(cr, 30*time.Millisecond)
+
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, postJSON("/api/containers", `{"image":"nginx","name":"fast"}`))
+	if out := rec.Body.String(); strings.Contains(out, "pull_stalled") {
+		t.Errorf("fast pull tripped the watchdog: %s", out)
+	}
+}
+
+func TestPullStallFromEnv(t *testing.T) {
+	t.Setenv("PORTHOLE_PULL_STALL_SECS", "")
+	if got := pullStallFromEnv(); got != 25*time.Second {
+		t.Errorf("default = %v, want 25s", got)
+	}
+	t.Setenv("PORTHOLE_PULL_STALL_SECS", "7")
+	if got := pullStallFromEnv(); got != 7*time.Second {
+		t.Errorf("override = %v, want 7s", got)
+	}
+	t.Setenv("PORTHOLE_PULL_STALL_SECS", "garbage")
+	if got := pullStallFromEnv(); got != 25*time.Second {
+		t.Errorf("garbage = %v, want 25s default", got)
 	}
 }
 

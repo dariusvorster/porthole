@@ -8,6 +8,7 @@ import type {
   Network,
   PrunePlan,
   PruneResult,
+  RegistryAuth,
   ResourceBundle,
   StackDownResult,
   StackPlan,
@@ -222,6 +223,40 @@ export function pullImage(ref: string, onEvent: (e: CreateEvent) => void): Promi
   return streamSSE('/api/images/pull', { ref }, onEvent)
 }
 
+// --- registry login (Phase 7) ----------------------------------------------
+
+/** POST a JSON body, expect a 2xx with NO body (204). Throws MutationError on
+ * non-2xx. Used for login/logout — never returns a body, so nothing to leak. */
+async function postNoBody(path: string, body: unknown): Promise<void> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (res.ok) return
+  let err: ApiError | undefined
+  try {
+    err = (await res.json()) as ApiError
+  } catch {
+    /* non-JSON */
+  }
+  throw new MutationError(err?.error ?? { kind: 'unknown', message: `request failed (${res.status})` })
+}
+
+export function getRegistry(): Promise<RegistryAuth[]> {
+  return getJSON<RegistryAuth[]>('/api/registry')
+}
+
+/** Log in to a registry. The token goes in the POST body (never a URL/query) and
+ * is never returned; the runtime stores it. Rejects MutationError on failure. */
+export function registryLogin(host: string, username: string, token: string): Promise<void> {
+  return postNoBody('/api/registry/login', { host, username, token })
+}
+
+export function registryLogout(host: string): Promise<void> {
+  return postNoBody('/api/registry/logout', { host })
+}
+
 // --- create / run container (Phase 5) --------------------------------------
 
 export function getImages(): Promise<Image[]> {
@@ -235,8 +270,12 @@ export function getImages(): Promise<Image[]> {
  * frames manually. Each event is delivered to `onEvent`; resolves when the
  * stream ends (after a terminal created/error).
  */
-export function createContainer(spec: CreateSpec, onEvent: (e: CreateEvent) => void): Promise<void> {
-  return streamSSE('/api/containers', spec, onEvent)
+export function createContainer(
+  spec: CreateSpec,
+  onEvent: (e: CreateEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamSSE('/api/containers', spec, onEvent, signal)
 }
 
 /**
@@ -245,12 +284,25 @@ export function createContainer(spec: CreateSpec, onEvent: (e: CreateEvent) => v
  * we POST and read the body with fetch, parsing SSE frames manually. Shared by
  * create and standalone image pull.
  */
-async function streamSSE(path: string, body: unknown, onEvent: (e: CreateEvent) => void): Promise<void> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+async function streamSSE(
+  path: string,
+  body: unknown,
+  onEvent: (e: CreateEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch (e) {
+    if (signal?.aborted) return // user cancelled — silent, no error event
+    onEvent({ kind: 'error', error: { kind: 'unknown', message: `request failed: ${String(e)}` } })
+    return
+  }
   // Pre-stream failures (400/403/422/503) return a JSON error envelope, not SSE.
   if (!res.ok || !res.body) {
     let env: ApiError | undefined
@@ -268,15 +320,22 @@ async function streamSSE(path: string, body: unknown, onEvent: (e: CreateEvent) 
   const reader = res.body.getReader()
   const dec = new TextDecoder()
   let buf = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += dec.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buf.indexOf('\n\n')) >= 0) {
-      parseCreateFrame(buf.slice(0, sep), onEvent)
-      buf = buf.slice(sep + 2)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buf.indexOf('\n\n')) >= 0) {
+        parseCreateFrame(buf.slice(0, sep), onEvent)
+        buf = buf.slice(sep + 2)
+      }
     }
+  } catch (e) {
+    // A dropped/aborted stream is the only non-terminal exit. If the user
+    // cancelled, stay silent; otherwise surface it so the UI isn't left hanging.
+    if (signal?.aborted) return
+    onEvent({ kind: 'error', error: { kind: 'unknown', message: `stream interrupted: ${String(e)}` } })
   }
 }
 
@@ -298,6 +357,8 @@ function parseCreateFrame(frame: string, onEvent: (e: CreateEvent) => void): voi
     onEvent({ kind: 'progress', index: Number(d.index), total: Number(d.total), phase: String(d.phase ?? '') })
   } else if (event === 'created') {
     onEvent({ kind: 'created', id: String(d.id ?? '') })
+  } else if (event === 'pull_stalled') {
+    onEvent({ kind: 'stalled', image: String(d.image ?? ''), message: String(d.message ?? '') })
   } else if (event === 'error') {
     onEvent({
       kind: 'error',

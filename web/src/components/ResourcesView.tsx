@@ -109,6 +109,11 @@ export function ResourcesView({ bundle, liveDiskUsage, onChanged }: ResourcesVie
         setPullRef('')
         showToast(`Pulled ${ref}`)
         onChanged()
+      } else if (e.kind === 'stalled') {
+        // Only the create path runs the keychain-stall watchdog today; handle it
+        // defensively so a future watchdog here surfaces rather than vanishes.
+        setError(e.message)
+        setPullPhase(null)
       } else {
         setError(e.error.message)
         setPullPhase(null)

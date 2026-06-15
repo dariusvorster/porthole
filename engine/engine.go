@@ -90,15 +90,16 @@ type ExecSession interface {
 type ErrorKind string
 
 const (
-	ErrUnknown         ErrorKind = "unknown"
-	ErrDaemonDown      ErrorKind = "daemon_down"
-	ErrNotFound        ErrorKind = "not_found"
-	ErrNameConflict    ErrorKind = "name_conflict"
-	ErrNotRunning      ErrorKind = "not_running"
-	ErrInvalidState    ErrorKind = "invalid_state"
-	ErrUnknownOption   ErrorKind = "unknown_option"
-	ErrImagePullFailed ErrorKind = "image_pull_failed"
-	ErrVolumeInUse     ErrorKind = "volume_in_use"
+	ErrUnknown             ErrorKind = "unknown"
+	ErrDaemonDown          ErrorKind = "daemon_down"
+	ErrNotFound            ErrorKind = "not_found"
+	ErrNameConflict        ErrorKind = "name_conflict"
+	ErrNotRunning          ErrorKind = "not_running"
+	ErrInvalidState        ErrorKind = "invalid_state"
+	ErrUnknownOption       ErrorKind = "unknown_option"
+	ErrImagePullFailed     ErrorKind = "image_pull_failed"
+	ErrVolumeInUse         ErrorKind = "volume_in_use"
+	ErrRegistryLoginFailed ErrorKind = "registry_login_failed"
 )
 
 // CLIError is the typed error surfaced from any failed `container` invocation.

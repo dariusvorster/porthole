@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/porthole/porthole/engine"
 	"github.com/porthole/porthole/stacks"
@@ -169,18 +170,60 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	for u := range s.creator.RunStream(r.Context(), rs) {
-		switch u.Kind {
-		case "progress":
-			writeCreateSSE(w, "progress", map[string]any{"index": u.Index, "total": u.Total, "phase": u.Phase})
-		case "created":
-			s.recordStart(u.ID) // mediated start → desired=running (correct restart intent)
-			s.emitResource()    // a new container changes the resource lists (PF1)
-			writeCreateSSE(w, "created", map[string]string{"id": u.ID})
-		case "error":
-			writeCreateSSE(w, "error", createErrorBody(u.Err))
+	// Own the child's lifetime so the keychain-stall watchdog can cancel it — the
+	// SAME context-cancel the Cancel button uses on a client disconnect (§7b).
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	updates := s.creator.RunStream(ctx, rs)
+
+	// Watchdog: a private pull whose credential read blocks on an invisible macOS
+	// keychain prompt sits at the INITIAL phase ([0/N]) and never prints a progress
+	// line. The discriminator is exactly that — ANY progress line means the fetch
+	// started (bytes moving), so a merely-slow pull is exempt no matter how long it
+	// then goes quiet. Trip only on "no progress while still at phase 0".
+	timer := time.NewTimer(s.pullStall)
+	defer timer.Stop()
+	gotProgress, stalled := false, false
+
+	for {
+		select {
+		case u, ok := <-updates:
+			if !ok {
+				return // stream closed → done
+			}
+			switch u.Kind {
+			case "progress":
+				if !gotProgress {
+					gotProgress = true // fetch is moving — disarm the watchdog
+					timer.Stop()
+				}
+				writeCreateSSE(w, "progress", map[string]any{"index": u.Index, "total": u.Total, "phase": u.Phase})
+			case "created":
+				s.recordStart(u.ID) // mediated start → desired=running (correct restart intent)
+				s.emitResource()    // a new container changes the resource lists (PF1)
+				writeCreateSSE(w, "created", map[string]string{"id": u.ID})
+			case "error":
+				if stalled {
+					continue // the cancel we issued produced this — already reported the stall
+				}
+				writeCreateSSE(w, "error", createErrorBody(u.Err))
+			}
+			flusher.Flush()
+		case <-timer.C:
+			if gotProgress || stalled {
+				continue // disarmed (progress arrived) or already fired
+			}
+			// Likely a keychain-authorization stall. Kill the child via ctx (proven
+			// teardown), then emit a HEDGED, typed pull_stalled event (NOT a hard
+			// error) carrying the image ref so the UI can build the exact fix command.
+			stalled = true
+			cancel()
+			writeCreateSSE(w, "pull_stalled", map[string]string{
+				"image":   rs.Image,
+				"message": "This pull appears stalled — likely waiting on one-time keychain authorization.",
+			})
+			flusher.Flush()
 		}
-		flusher.Flush()
 	}
 }
 

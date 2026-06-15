@@ -39,3 +39,9 @@ filt-*.png
 dbg-*.png
 topbar-*.png
 *.tsbuildinfo
+
+# internal working docs + verification screenshots (not part of the repo)
+/porthole-*-spec.md
+/porthole-*-prompts.md
+/docs/porthole-*.md
+reg-*.png

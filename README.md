@@ -110,10 +110,20 @@ Porthole doesn't store anything itself — it uses `container`'s own image store
   (`docker.io/library/nginx:latest`); you can also give a fully-qualified
   reference (`ghcr.io/owner/image:tag`). Porthole streams the pull progress in the
   create form, and offers a standalone **Pull** action in the Resources view.
-- **Private registries:** `container` supports registry auth via
-  `container registry login`. Porthole doesn't expose that yet (a private image
-  currently surfaces as "not found or inaccessible" — that's an auth failure, not
-  a missing image), so log in via the CLI for now. UI support is on the roadmap.
+- **Private registries:** log in from **Settings → Registry** (a failed pull also
+  nudges you there). Porthole pipes the token straight to `container registry login`
+  over stdin and never stores it — `container` owns the credential.
+  - **One-time keychain authorization:** your *first* private pull may appear to
+    stall right at the start. `container`'s image helper reads your saved
+    credential from the macOS keychain, and macOS raises a permission prompt the
+    background `portholed` can't display — so the pull waits. Run the pull once in
+    Terminal and click **Always Allow**:
+    ```sh
+    container image pull <your-private-image>
+    ```
+    The grant is then stored on the keychain item (keyed to the helper, not the
+    caller), so every later pull — including Porthole's — reads it silently.
+    Porthole detects this stall and shows you this exact command instead of hanging.
 - **On disk:** images, volumes, snapshots, and all runtime state live under
   `~/Library/Application Support/com.apple.container/` (Porthole's own state — just
   supervision policies and stack definitions — is separate; see Configuration).
@@ -176,8 +186,6 @@ use, so feedback on ordering is genuinely welcome:
   Tracked upstream.
 - **Richer create form** — health check at create, `--init`, read-only rootfs,
   capabilities, and create-without-start.
-- **Registry login** — pull private images (today a private image surfaces as
-  "not found or inaccessible").
 - **Selectable list rows**, and other quality-of-life touches.
 
 ## How it works

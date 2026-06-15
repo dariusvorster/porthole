@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createContainer, getImages } from '../api/rest'
 import type { CreateSpec, Image, Network } from '../api/types'
 import { showToast } from '../lib/toast'
@@ -7,6 +7,8 @@ interface CreateFormProps {
   networks: Network[]
   onClose: () => void
   onCreated: (id: string) => void
+  /** Open Settings → Registry (the create-error nudge target, REG4). */
+  onOpenRegistry?: () => void
 }
 
 interface KV {
@@ -36,7 +38,7 @@ const btn =
  * shows a phase stepper — never a frozen dialog. Recreate/restart/health write
  * supervision labels server-side.
  */
-export function CreateForm({ networks, onClose, onCreated }: CreateFormProps) {
+export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: CreateFormProps) {
   const [images, setImages] = useState<Image[]>([])
   const [image, setImage] = useState('')
   const [name, setName] = useState('')
@@ -53,8 +55,25 @@ export function CreateForm({ networks, onClose, onCreated }: CreateFormProps) {
   const [labels, setLabels] = useState<KV[]>([])
 
   const [progress, setProgress] = useState<ProgressState>(null)
+  const [lines, setLines] = useState<string[]>([]) // streaming pull/start status (hung-vs-slow visibility)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorKind, setErrorKind] = useState<string | null>(null)
+  // The keychain-stall state (Phase 7b): distinct from `error` — hedged, with the
+  // image ref so we can show the exact one-time `container image pull <ref>` fix.
+  const [stalled, setStalled] = useState<{ image: string; message: string } | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const logRef = useRef<HTMLDivElement>(null)
+
+  // Abort any in-flight pull if the form unmounts (closes the SSE → backend kills
+  // the child), so a closed dialog never leaves an orphaned pull running.
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  // Auto-scroll the status log to the latest line.
+  useEffect(() => {
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines])
 
   useEffect(() => {
     getImages()
@@ -111,21 +130,53 @@ export function CreateForm({ networks, onClose, onCreated }: CreateFormProps) {
       return
     }
     setError(null)
+    setErrorKind(null)
+    setStalled(null)
+    setLines([])
     setSubmitting(true)
     setProgress({ index: 0, total: 6, phase: 'starting…' })
-    await createContainer(buildSpec(), (e) => {
-      if (e.kind === 'progress') {
-        setProgress({ index: e.index, total: e.total, phase: e.phase || 'working…' })
-      } else if (e.kind === 'created') {
-        showToast(`Created ${name.trim() || e.id}`)
-        onCreated(e.id)
-        onClose()
-      } else {
-        setError(e.error.message || 'create failed')
-        setSubmitting(false)
-        setProgress(null)
-      }
-    })
+    const ac = new AbortController()
+    abortRef.current = ac
+    await createContainer(
+      buildSpec(),
+      (e) => {
+        if (e.kind === 'progress') {
+          setProgress({ index: e.index, total: e.total, phase: e.phase || 'working…' })
+          // Append the raw status line so a stall (lines stop) reads differently
+          // from slow progress (lines keep flowing).
+          const line = `[${e.index}/${e.total}] ${e.phase || ''}`.trimEnd()
+          setLines((prev) => (prev[prev.length - 1] === line ? prev : [...prev, line].slice(-200)))
+        } else if (e.kind === 'created') {
+          showToast(`Created ${name.trim() || e.id}`)
+          onCreated(e.id)
+          onClose()
+        } else if (e.kind === 'stalled') {
+          // Keep the progress log visible — it shows the lines stopped at the
+          // initial phase. The form returns to usable (submitting=false) so Retry
+          // works after the user authorizes the keychain.
+          setStalled({ image: e.image, message: e.message })
+          setSubmitting(false)
+        } else {
+          setError(e.error.message || 'create failed')
+          setErrorKind(e.error.kind)
+          setSubmitting(false)
+          setProgress(null)
+        }
+      },
+      ac.signal,
+    )
+  }
+
+  // Abort an in-flight pull (escape a hung/slow pull); otherwise close the form.
+  const onCancel = () => {
+    if (submitting) {
+      abortRef.current?.abort()
+      setSubmitting(false)
+      setProgress(null)
+      setError(null)
+      return
+    }
+    onClose()
   }
 
   const isBind = (src: string) => src.startsWith('/') || src.startsWith('.')
@@ -325,16 +376,93 @@ export function CreateForm({ networks, onClose, onCreated }: CreateFormProps) {
 
         {/* progress / error / actions */}
         {progress && (
-          <div className="rounded border-hairline border-status-running/40 bg-status-running/5 px-2 py-1.5 font-mono text-2xs" data-testid="create-progress">
-            <span className="text-status-running">
+          <div
+            className="space-y-1 rounded border-hairline border-status-running/40 bg-status-running/5 px-2 py-1.5 font-mono text-2xs"
+            data-testid="create-progress"
+          >
+            <div className="text-status-running">
               [{progress.index}/{progress.total}] {progress.phase}
-            </span>
+            </div>
+            {/* Streaming status: the raw lines as they arrive. If they stop, the
+                pull is hung; if they keep coming, it's just slow. */}
+            {lines.length > 0 && (
+              <div
+                ref={logRef}
+                data-testid="create-progress-log"
+                className="max-h-28 overflow-auto whitespace-pre-wrap break-all text-2xs leading-snug text-neutral-500 dark:text-neutral-400"
+              >
+                {lines.map((l, i) => (
+                  <div key={i}>{l}</div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-        {error && <div className="font-mono text-2xs text-status-danger" data-testid="create-error">{error}</div>}
+        {error && (
+          <div className="space-y-1" data-testid="create-error">
+            <div className="font-mono text-2xs text-status-danger">{error}</div>
+            {errorKind === 'image_pull_failed' && onOpenRegistry && (
+              <button
+                type="button"
+                onClick={onOpenRegistry}
+                className="font-mono text-2xs text-status-running underline"
+                data-testid="registry-nudge"
+              >
+                If this is a private image, log in to its registry first →
+              </button>
+            )}
+          </div>
+        )}
+        {/* Keychain-stall panel (Phase 7b): hedged, amber (distinct from the red
+            not-found error), with the EXACT one-time fix using the real ref. */}
+        {stalled && (
+          <div
+            className="space-y-2 rounded border-hairline border-status-warn/50 bg-status-warn/5 px-2 py-2"
+            data-testid="create-stalled"
+          >
+            <div className="font-mono text-2xs font-medium text-status-warn">
+              {stalled.message || 'This pull appears stalled — likely waiting on a one-time keychain authorization.'}
+            </div>
+            <div className="font-sans text-2xs text-neutral-600 dark:text-neutral-300">
+              Run this once in Terminal and click <span className="font-semibold">Always Allow</span> on the keychain
+              prompt. After that, Porthole pulls private images on its own — then retry here.
+            </div>
+            <div className="flex items-center gap-1">
+              <pre
+                className="flex-1 overflow-auto rounded bg-neutral-800 px-2 py-1 font-mono text-2xs text-neutral-100 dark:bg-neutral-900"
+                data-testid="stalled-command"
+              >
+                container image pull {stalled.image}
+              </pre>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard?.writeText(`container image pull ${stalled.image}`).then(
+                    () => showToast('Command copied'),
+                    () => {
+                      /* clipboard blocked — the block is still selectable */
+                    },
+                  )
+                }}
+                className={btn}
+                aria-label="copy command"
+              >
+                copy
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={onSubmit}
+              className="rounded border-hairline border-status-running/50 bg-status-running/10 px-3 py-0.5 font-mono text-2xs text-status-running hover:bg-status-running/20"
+              data-testid="stalled-retry"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-2 border-t border-neutral-200/70 pt-2 dark:border-neutral-800/70">
-          <button type="button" onClick={onClose} className={btn} disabled={submitting}>
+          <button type="button" onClick={onCancel} className={btn}>
             cancel
           </button>
           <button

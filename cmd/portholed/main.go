@@ -124,6 +124,7 @@ func main() {
 		Stacks:         stackMgr,
 		Creator:        eng, // *CLIEngine: progress-streaming run + image list (Phase 5)
 		Resources:      eng, // *CLIEngine: list/remove/prune/pull (Phase 6)
+		Registry:       eng, // *CLIEngine: registry login/list/logout (Phase 7)
 	})
 
 	httpServer := &http.Server{
