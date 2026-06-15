@@ -101,6 +101,26 @@ nothing else to deploy.
 
 ![Inspector with logs, exec, and supervision badges](docs/screenshots/inspector.png)
 
+## Where images come from and live
+
+Porthole doesn't store anything itself — it uses `container`'s own image store.
+
+- **Pulling:** when you run a container, `container` pulls the image if it's not
+  already local. A bare name like `nginx` resolves to Docker Hub
+  (`docker.io/library/nginx:latest`); you can also give a fully-qualified
+  reference (`ghcr.io/owner/image:tag`). Porthole streams the pull progress in the
+  create form, and offers a standalone **Pull** action in the Resources view.
+- **Private registries:** `container` supports registry auth via
+  `container registry login`. Porthole doesn't expose that yet (a private image
+  currently surfaces as "not found or inaccessible" — that's an auth failure, not
+  a missing image), so log in via the CLI for now. UI support is on the roadmap.
+- **On disk:** images, volumes, snapshots, and all runtime state live under
+  `~/Library/Application Support/com.apple.container/` (Porthole's own state — just
+  supervision policies and stack definitions — is separate; see Configuration).
+  The **Resources** view shows what's reclaimable and reclaims it with a
+  preview-then-apply prune, including the orphaned anonymous volumes the runtime
+  otherwise leaves behind.
+
 ## Security
 
 **Porthole is localhost-only by design.** This is deliberate, and it matters more than
