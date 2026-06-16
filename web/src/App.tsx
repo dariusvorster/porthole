@@ -194,7 +194,13 @@ export default function App() {
               />
             ) : (
               <div className="p-4">
-                <ListView containers={filtered} stats={stats} supervision={supervision} />
+                <ListView
+                  containers={filtered}
+                  stats={stats}
+                  supervision={supervision}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                />
               </div>
             )}
           </main>

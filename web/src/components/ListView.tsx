@@ -8,6 +8,8 @@ interface ListViewProps {
   containers: Container[]
   stats: Map<string, StatsSample>
   supervision: Map<string, Supervision>
+  selectedId?: string | null
+  onSelect?: (id: string) => void
 }
 
 function stateKind(state: string): StatusKind {
@@ -33,7 +35,7 @@ const dash = <span className="text-neutral-400">—</span>
  * over the same store the topology uses. Rows key by id so stats ticks update
  * cells in place without re-mounting (no flicker).
  */
-export function ListView({ containers, stats, supervision }: ListViewProps) {
+export function ListView({ containers, stats, supervision, selectedId, onSelect }: ListViewProps) {
   if (containers.length === 0) {
     return <div className="p-6 text-2xs text-neutral-400">no containers</div>
   }
@@ -59,10 +61,18 @@ export function ListView({ containers, stats, supervision }: ListViewProps) {
           const ip = primaryIPv4(c)
           const cpu = running ? pct(sample?.cpuPercent) : ''
           const mem = running ? pct(sample?.memoryPercent) : ''
+          const selected = selectedId === c.id
           return (
             <tr
               key={c.id}
-              className="border-b border-neutral-100 hover:bg-neutral-50 dark:border-neutral-900 dark:hover:bg-neutral-900/40"
+              onClick={() => onSelect?.(c.id)}
+              aria-selected={selected}
+              className={[
+                'cursor-pointer border-b border-neutral-100 dark:border-neutral-900',
+                selected
+                  ? 'bg-neutral-100 dark:bg-neutral-800/60'
+                  : 'hover:bg-neutral-50 dark:hover:bg-neutral-900/40',
+              ].join(' ')}
             >
               <td
                 className="py-1.5 pr-3 font-mono text-neutral-800 dark:text-neutral-200"
