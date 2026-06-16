@@ -132,6 +132,19 @@ func (s *Server) handleStackRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// POST /api/stacks/{name}/remediate — APPLY the planner's recreates (Phase 10,
+// destructive). Distinct from the read-only plan: this stops/removes/re-creates
+// drifted services with spec-snapshot rollback. Returns per-service outcomes.
+// Gated + browser-guarded like every mutation.
+func (s *Server) handleStackRemediate(w http.ResponseWriter, r *http.Request) {
+	res, ok, err := s.stacks.Remediate(r.Context(), r.PathValue("name"))
+	if !s.handleStackErr(w, r, ok, err) {
+		return
+	}
+	s.emitStack(r.Context(), r.PathValue("name")) // members changed → refresh UI + resources
+	writeJSON(w, http.StatusOK, res)
+}
+
 // POST /api/stacks/{name}/discovery — toggle service discovery (Phase 8). Writes
 // the DB flag (working truth); the discovery controller injects/strips peers'
 // /etc/hosts on the next reconcile cycle. Gated + browser-guarded like every

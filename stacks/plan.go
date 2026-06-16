@@ -35,10 +35,11 @@ func (k ActionKind) Destructive() bool { return k == ActionRecreate || k == Acti
 
 // ServiceAction is one entry in a Plan.
 type ServiceAction struct {
-	Service     string     `json:"service"`
-	Action      ActionKind `json:"action"`
-	ContainerID string     `json:"containerId,omitempty"` // for existing containers
-	Diff        []string   `json:"diff,omitempty"`        // for recreate: what changed
+	Service     string       `json:"service"`
+	Action      ActionKind   `json:"action"`
+	ContainerID string       `json:"containerId,omitempty"` // for existing containers
+	Diff        []string     `json:"diff,omitempty"`        // for recreate: what changed
+	Volumes     []VolumePlan `json:"volumes,omitempty"`     // for recreate: preserved/orphaned (Phase 10)
 }
 
 // Plan is the reconcile diff between a desired Stack and the observed containers.
@@ -105,6 +106,7 @@ func PlanReconcile(desired Stack, observed []engine.Container) Plan {
 			if diff := configDiff(svc, c); len(diff) > 0 {
 				plan.Actions = append(plan.Actions, ServiceAction{
 					Service: svc.Name, Action: ActionRecreate, ContainerID: c.ID, Diff: diff,
+					Volumes: volumePlansFor(c), // preview: what a recreate preserves/orphans
 				})
 			} else {
 				plan.Actions = append(plan.Actions, ServiceAction{Service: svc.Name, Action: ActionNoop, ContainerID: c.ID})

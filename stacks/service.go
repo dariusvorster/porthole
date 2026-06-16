@@ -195,6 +195,18 @@ func (s *Manager) Restart(ctx context.Context, name string) (UpResult, bool, err
 	return res, true, err
 }
 
+// Remediate APPLIES the drifted-service recreates the planner flags (Phase 10,
+// destructive). Loads with the discovery flag so re-created members carry the
+// porthole.discovery label. ok=false if the stack is unknown.
+func (s *Manager) Remediate(ctx context.Context, name string) (RemediateResult, bool, error) {
+	stack, ok, err := s.loadValidWithDiscovery(name)
+	if err != nil || !ok {
+		return RemediateResult{}, ok, err
+	}
+	res, err := s.exec.Remediate(ctx, stack)
+	return res, true, err
+}
+
 // Delete removes the stored stack definition. It does NOT touch running
 // containers — the caller must `down` first to tear them down (spec/ST4).
 func (s *Manager) Delete(name string) (bool, error) {

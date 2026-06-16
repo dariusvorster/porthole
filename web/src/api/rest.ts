@@ -9,6 +9,7 @@ import type {
   PrunePlan,
   PruneResult,
   RegistryAuth,
+  RemediateResult,
   ResourceBundle,
   StackDownResult,
   StackPlan,
@@ -180,6 +181,12 @@ export function downStack(name: string): Promise<StackDownResult> {
 
 export function restartStack(name: string): Promise<StackUpResult> {
   return postJSON<StackUpResult>(`/api/stacks/${id(name)}/restart`)
+}
+
+/** Apply the planner's recreates (Phase 10, DESTRUCTIVE). Returns per-service
+ * outcomes (recreated / rolled_back / failed_down). Throws MutationError on non-2xx. */
+export function remediateStack(name: string): Promise<RemediateResult> {
+  return postJSON<RemediateResult>(`/api/stacks/${id(name)}/remediate`)
 }
 
 export function deleteStack(name: string): Promise<void> {

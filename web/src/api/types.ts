@@ -264,11 +264,33 @@ export interface StackServiceAction {
   action: StackActionKind
   containerId?: string
   diff?: string[]
+  volumes?: VolumePlan[] // for recreate: what's preserved/orphaned (Phase 10)
 }
 
 export interface StackPlan {
   stack: string
   actions: StackServiceAction[] | null
+}
+
+/** A volume's fate on recreate (Phase 10). */
+export interface VolumePlan {
+  source: string
+  target: string
+  kind: 'named' | 'bind' | 'anonymous'
+  orphaned: boolean
+}
+
+/** Per-service result of applying a recreate (Phase 10). */
+export type RemediateOutcome = 'recreated' | 'rolled_back' | 'failed_down'
+export interface ServiceRemediation {
+  service: string
+  outcome: RemediateOutcome
+  message?: string
+  volumes?: VolumePlan[]
+}
+export interface RemediateResult {
+  stack: string
+  applied: ServiceRemediation[] | null
 }
 
 export interface StackFailure {

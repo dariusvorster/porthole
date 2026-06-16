@@ -4,12 +4,20 @@ import {
   downStack,
   importStack,
   planStack,
+  remediateStack,
   restartStack,
   setStackDiscovery,
   upStack,
   validateStack,
 } from '../api/rest'
-import type { StackActionKind, StackPlan, StackView, ValidationReport } from '../api/types'
+import type {
+  RemediateResult,
+  StackActionKind,
+  StackPlan,
+  StackServiceAction,
+  StackView,
+  ValidationReport,
+} from '../api/types'
 import { showToast } from '../lib/toast'
 import { EmptyState } from './EmptyState'
 import { StatusDot, type StatusKind } from './StatusDot'
@@ -35,7 +43,7 @@ const SAFE: Record<StackActionKind, boolean> = {
 }
 
 const ACTION_NOTE: Partial<Record<StackActionKind, string>> = {
-  recreate: 'would recreate — not applied in this version',
+  recreate: 'config drifted — apply below to recreate',
   orphan: 'running but not in the file',
 }
 
@@ -396,7 +404,131 @@ function StackDetail({ stack, onChanged }: { stack: StackView; onChanged: () => 
 
       {/* Plan / diff */}
       {plan && <PlanView plan={plan} />}
+
+      {/* Destructive remediation — only when the plan flags recreates */}
+      {plan &&
+        (() => {
+          const recreates = (plan.actions ?? []).filter((a) => a.action === 'recreate')
+          return recreates.length > 0 ? (
+            <RemediationPanel stackName={stack.name} recreates={recreates} onApplied={onChanged} />
+          ) : null
+        })()}
     </div>
+  )
+}
+
+// RemediationPanel applies the planner's recreates behind an explicit confirm that
+// names the consequences (which services, which volumes preserved/orphaned), then
+// renders per-service outcomes. Destructive — never auto-applies (Phase 10).
+function RemediationPanel({
+  stackName,
+  recreates,
+  onApplied,
+}: {
+  stackName: string
+  recreates: StackServiceAction[]
+  onApplied: () => void
+}) {
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<RemediateResult | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const vols = recreates.flatMap((r) => r.volumes ?? [])
+  const preserved = vols.filter((v) => !v.orphaned)
+  const orphans = vols.filter((v) => v.orphaned)
+
+  const apply = async () => {
+    setBusy(true)
+    setErr(null)
+    try {
+      setResult(await remediateStack(stackName))
+      setConfirm(false)
+      onApplied()
+    } catch (e) {
+      setErr(e instanceof MutationError ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section
+      data-testid="remediation"
+      className="space-y-1.5 rounded border-hairline border-status-danger/50 bg-status-danger/5 p-2 font-mono text-2xs"
+    >
+      <div className="font-semibold text-status-danger">
+        destructive — recreate {recreates.length} service{recreates.length > 1 ? 's' : ''}
+      </div>
+
+      {!result && !confirm && (
+        <button
+          type="button"
+          onClick={() => setConfirm(true)}
+          data-testid="remediate-apply"
+          className="rounded border-hairline border-status-danger/50 px-2 py-0.5 text-status-danger hover:bg-status-danger/10"
+        >
+          Apply remediation…
+        </button>
+      )}
+
+      {confirm && !result && (
+        <div className="space-y-1">
+          <div className="text-neutral-700 dark:text-neutral-200">
+            Recreate <span className="font-medium">{recreates.map((r) => r.service).join(', ')}</span>: each is stopped
+            and replaced — briefly unavailable. On failure the previous container is restored.
+          </div>
+          {preserved.length > 0 && (
+            <div className="text-neutral-500">
+              Preserved: {preserved.map((v) => v.source || v.target).join(', ')}
+            </div>
+          )}
+          {orphans.length > 0 && (
+            <div className="text-status-warn">
+              ⚠️ anonymous volume{orphans.length > 1 ? 's' : ''} will be orphaned:{' '}
+              {orphans.map((v) => v.target).join(', ')}
+            </div>
+          )}
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={apply}
+              data-testid="remediate-confirm"
+              className="rounded border-hairline border-status-danger/60 px-2 py-0.5 text-status-danger hover:bg-status-danger/10 disabled:opacity-40"
+            >
+              {busy ? 'applying…' : 'yes, recreate'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirm(false)}
+              className="rounded border-hairline border-neutral-300/70 px-2 py-0.5 hover:bg-neutral-50 dark:border-neutral-700/70"
+            >
+              cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {err && <div className="text-status-danger">{err}</div>}
+
+      {result && (
+        <div className="space-y-0.5" data-testid="remediate-results">
+          {(result.applied ?? []).map((r) => (
+            <div key={r.service}>
+              <span className="font-medium">{r.service}</span>{' '}
+              {r.outcome === 'recreated' && <span className="text-status-running">✓ recreated</span>}
+              {r.outcome === 'rolled_back' && (
+                <span className="text-status-warn">⚠ rolled back — {r.message || 'restored previous'}</span>
+              )}
+              {r.outcome === 'failed_down' && (
+                <span className="text-status-danger">✗ FAILED — service down — {r.message}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 

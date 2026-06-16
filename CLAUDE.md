@@ -273,6 +273,24 @@ Completes the create form. Additive. Key points:
   advanced fields unless opened.
 - Excluded: --rm, --mount, --dns*, arch/os/platform/expert flags.
 
+## Destructive drift remediation (Phase 10 / v2) — completes Stacks
+Applies the recreate the planner flags (a service whose spec changed). Strategy
+forced by capture: id==name strict + NO rename → create-then-swap can't end clean
+→ stop-remove-create + spec-snapshot ROLLBACK.
+- Sequence (per drifted service): snapshot old RunSpec (reconstructed from the
+  observed container) → stop → remove → create(new spec) → start → verify. On
+  create/start failure: re-create from the snapshot, start, and surface LOUDLY
+  "recreate of <svc> failed — restored previous". If rollback ALSO fails: critical
+  state, service named DOWN with the snapshot shown. Never silent.
+- Hold the shared idlock across the WHOLE sequence (not per-step) so supervisor
+  (won't see it "missing" and restart), discovery (won't inject mid-remove), and
+  other mutations can't race the gone-window. After release + new container up,
+  discovery re-injects (new IP/startedDate, DISC3) and supervision re-adopts (new
+  RunSpec labels) automatically.
+- Named volumes survive recreate (preserve); anonymous volumes orphan (warn in
+  confirm). Rolling: one service at a time, each isolated — a rollback in one
+  doesn't cascade. Explicit apply only, never auto. Recreate only, not orphan.
+
 ---
 
 # context-mode — MANDATORY routing rules
