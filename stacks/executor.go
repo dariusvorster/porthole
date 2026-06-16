@@ -22,13 +22,24 @@ type Engine interface {
 	DeleteContainer(ctx context.Context, id string, force bool) error
 }
 
-// Executor applies stack plans through the engine. v1 applies ONLY the safe
-// (non-destructive) actions — create/start; recreate and orphan are detected and
-// surfaced in the Plan but never executed (spec §6/§10).
+// SpecStore persists the authoritative RunSpec per container name (Phase 10b) so
+// drift-remediation rollback is byte-perfect rather than reconstructed from
+// `inspect`. nil → no persistence; rollback falls back to reconstruction (so this
+// is purely additive — never worse than before).
+type SpecStore interface {
+	SaveSpec(name string, spec engine.RunSpec) error
+	GetSpec(name string) (engine.RunSpec, bool, error)
+	DeleteSpec(name string) error
+}
+
+// Executor applies stack plans through the engine. It applies the safe actions
+// (create/start) and — for destructive drift remediation (Phase 10) — recreate
+// with rollback. Orphan is detected only.
 type Executor struct {
 	eng        Engine
 	locks      *idlock.KeyedMutex // per-container, shared with user mutations + supervisor (spec §6)
 	stackLocks *idlock.KeyedMutex // per-stack, so two ups on one stack serialize (spec §8)
+	specs      SpecStore          // optional: persisted RunSpecs for byte-perfect rollback
 }
 
 // NewExecutor wires the executor. locks is the SHARED per-container KeyedMutex so
@@ -127,8 +138,12 @@ func (e *Executor) applyOne(ctx context.Context, stack Stack, svc Service, actio
 		name := containerName(stack.Name, svc.Name)
 		unlock := e.locks.Lock(name)
 		defer unlock()
-		_, err := e.eng.RunContainer(ctx, runSpecFor(stack, svc))
-		return err
+		spec := runSpecFor(stack, svc)
+		if _, err := e.eng.RunContainer(ctx, spec); err != nil {
+			return err
+		}
+		e.saveSpec(name, spec) // authoritative spec for byte-perfect rollback (Phase 10b)
+		return nil
 	case ActionStart:
 		unlock := e.locks.Lock(action.ContainerID)
 		defer unlock()
@@ -181,7 +196,11 @@ func (e *Executor) removeOne(ctx context.Context, id string) error {
 	unlock := e.locks.Lock(id)
 	defer unlock()
 	// force=true: stop+remove in one step (a running member must come down).
-	return e.eng.DeleteContainer(ctx, id, true)
+	if err := e.eng.DeleteContainer(ctx, id, true); err != nil {
+		return err
+	}
+	e.deleteSpec(id) // a removed container's stored spec is stale — drop it
+	return nil
 }
 
 // Restart stops then starts each declared member (no recreate). Stop in reverse

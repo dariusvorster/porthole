@@ -18,9 +18,10 @@ type remEngine struct {
 	mu         sync.Mutex
 	containers map[string]engine.Container
 	ops        []string
-	failImage  map[string]bool // RunContainer fails if spec.Image is here
-	failStart  map[string]bool // StartContainer fails if id is here
-	onRun      func()          // hook fired inside RunContainer (lock-span test)
+	runSpecs   []engine.RunSpec // every spec passed to RunContainer, in order
+	failImage  map[string]bool  // RunContainer fails if spec.Image is here
+	failStart  map[string]bool  // StartContainer fails if id is here
+	onRun      func()           // hook fired inside RunContainer (lock-span test)
 }
 
 func newRemEngine() *remEngine {
@@ -50,6 +51,7 @@ func (e *remEngine) RunContainer(_ context.Context, spec engine.RunSpec) (string
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.runSpecs = append(e.runSpecs, spec)
 	if e.failImage[spec.Image] {
 		return "", &engine.CLIError{Kind: engine.ErrImagePullFailed, Message: "image not found"}
 	}

@@ -2,10 +2,13 @@ package stacks
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/porthole/porthole/engine"
 )
 
 // Record is a stored stack: its name (PRIMARY KEY) and the raw compose YAML that
@@ -22,11 +25,20 @@ type Record struct {
 
 // Store persists stack definitions. Reuses the supervision SQLite database (a
 // separate `stacks` table) in production; MemStore backs tests.
+//
+// It also persists the authoritative RunSpec Porthole builds at create time,
+// keyed by container name (Phase 10b), so drift-remediation rollback is byte-
+// perfect rather than reconstructed from `inspect`. A container with no stored
+// spec falls back to reconstruction — so this is purely additive.
 type Store interface {
 	SaveStack(r Record) error
 	GetStack(name string) (Record, bool, error)
 	ListStacks() ([]Record, error)
 	DeleteStack(name string) error
+
+	SaveSpec(name string, spec engine.RunSpec) error
+	GetSpec(name string) (engine.RunSpec, bool, error)
+	DeleteSpec(name string) error
 }
 
 // SQLiteStore is the on-disk Store. It shares the *sql.DB opened by the
@@ -55,7 +67,53 @@ func NewSQLiteStore(db *sql.DB) (*SQLiteStore, error) {
 		!strings.Contains(err.Error(), "duplicate column") {
 		return nil, err
 	}
+	// Phase 10b: the per-container authoritative RunSpec for byte-perfect rollback.
+	// A new table, so a plain CREATE IF NOT EXISTS migrates an existing DB cleanly.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS container_specs (
+			name       TEXT PRIMARY KEY,
+			spec       TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+	`); err != nil {
+		return nil, err
+	}
 	return &SQLiteStore{db: db}, nil
+}
+
+// SaveSpec stores (upserts) the authoritative RunSpec for a container name.
+func (s *SQLiteStore) SaveSpec(name string, spec engine.RunSpec) error {
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO container_specs (name, spec, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET spec = excluded.spec, updated_at = excluded.updated_at
+	`, name, string(b), time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+// GetSpec returns the stored RunSpec for a container name, ok=false if absent.
+func (s *SQLiteStore) GetSpec(name string) (engine.RunSpec, bool, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT spec FROM container_specs WHERE name = ?`, name).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return engine.RunSpec{}, false, nil
+	}
+	if err != nil {
+		return engine.RunSpec{}, false, err
+	}
+	var spec engine.RunSpec
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return engine.RunSpec{}, false, err
+	}
+	return spec, true, nil
+}
+
+func (s *SQLiteStore) DeleteSpec(name string) error {
+	_, err := s.db.Exec(`DELETE FROM container_specs WHERE name = ?`, name)
+	return err
 }
 
 func (s *SQLiteStore) SaveStack(r Record) error {
@@ -128,13 +186,37 @@ func (s *SQLiteStore) DeleteStack(name string) error {
 
 // MemStore is an in-memory Store for tests.
 type MemStore struct {
-	mu sync.Mutex
-	m  map[string]Record
+	mu    sync.Mutex
+	m     map[string]Record
+	specs map[string]engine.RunSpec
 }
 
 var _ Store = (*MemStore)(nil)
 
-func NewMemStore() *MemStore { return &MemStore{m: map[string]Record{}} }
+func NewMemStore() *MemStore {
+	return &MemStore{m: map[string]Record{}, specs: map[string]engine.RunSpec{}}
+}
+
+func (s *MemStore) SaveSpec(name string, spec engine.RunSpec) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.specs[name] = spec
+	return nil
+}
+
+func (s *MemStore) GetSpec(name string) (engine.RunSpec, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	spec, ok := s.specs[name]
+	return spec, ok, nil
+}
+
+func (s *MemStore) DeleteSpec(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.specs, name)
+	return nil
+}
 
 func (s *MemStore) SaveStack(r Record) error {
 	s.mu.Lock()

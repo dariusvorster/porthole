@@ -83,7 +83,7 @@ func (e *Executor) recreateService(ctx context.Context, stack Stack, svc Service
 	unlock := e.locks.Lock(old.ID)
 	defer unlock()
 
-	snapshot := specFromContainer(old) // the restore source — captured BEFORE destroying
+	snapshot := e.snapshotFor(old) // restore source — the stored spec if we have one, else reconstructed
 	newSpec := runSpecFor(stack, svc)
 	plan := planRecreate(snapshot, newSpec)
 	rem := ServiceRemediation{Service: svc.Name, Volumes: plan.Volumes}
@@ -105,8 +105,34 @@ func (e *Executor) recreateService(ctx context.Context, stack Stack, svc Service
 		_ = e.eng.DeleteContainer(ctx, newSpec.Name, true)
 		return e.rollback(ctx, rem, snapshot, "new container failed to start: "+err.Error())
 	}
+	e.saveSpec(newSpec.Name, newSpec) // success → keep current so the NEXT rollback targets this version
 	rem.Outcome = OutcomeRecreated
 	return rem
+}
+
+// snapshotFor returns the rollback source for a container: its persisted
+// authoritative RunSpec when one exists (byte-perfect — keeps entrypoint/shm-size/
+// tmpfs the observed object can't recover), else a reconstruction from the
+// observed container (the additive fallback — never worse than before).
+func (e *Executor) snapshotFor(old engine.Container) engine.RunSpec {
+	if e.specs != nil {
+		if spec, ok, err := e.specs.GetSpec(old.ID); err == nil && ok {
+			return spec
+		}
+	}
+	return specFromContainer(old)
+}
+
+func (e *Executor) saveSpec(name string, spec engine.RunSpec) {
+	if e.specs != nil {
+		_ = e.specs.SaveSpec(name, spec)
+	}
+}
+
+func (e *Executor) deleteSpec(name string) {
+	if e.specs != nil {
+		_ = e.specs.DeleteSpec(name)
+	}
 }
 
 // rollback re-creates the previous container from the snapshot and starts it. If

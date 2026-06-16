@@ -277,11 +277,16 @@ Completes the create form. Additive. Key points:
 Applies the recreate the planner flags (a service whose spec changed). Strategy
 forced by capture: id==name strict + NO rename → create-then-swap can't end clean
 → stop-remove-create + spec-snapshot ROLLBACK.
-- Sequence (per drifted service): snapshot old RunSpec (reconstructed from the
-  observed container) → stop → remove → create(new spec) → start → verify. On
-  create/start failure: re-create from the snapshot, start, and surface LOUDLY
-  "recreate of <svc> failed — restored previous". If rollback ALSO fails: critical
-  state, service named DOWN with the snapshot shown. Never silent.
+- Sequence (per drifted service): snapshot old RunSpec → stop → remove →
+  create(new spec) → start → verify. On create/start failure: re-create from the
+  snapshot, start, and surface LOUDLY "recreate of <svc> failed — restored
+  previous". If rollback ALSO fails: critical state, service named DOWN with the
+  snapshot shown. Never silent.
+- Snapshot source (§9b, Phase 10b): the AUTHORITATIVE RunSpec is persisted in the
+  stacks store at create + recreate, keyed by container name — rollback uses it for
+  a BYTE-PERFECT restore (keeps --entrypoint/--shm-size/--tmpfs the observed object
+  can't recover). A container with no stored spec (pre-feature, or non-stack) falls
+  back to reconstructing from `inspect` — additive, never worse than before.
 - Hold the shared idlock across the WHOLE sequence (not per-step) so supervisor
   (won't see it "missing" and restart), discovery (won't inject mid-remove), and
   other mutations can't race the gone-window. After release + new container up,

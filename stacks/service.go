@@ -29,7 +29,9 @@ type Manager struct {
 // NewManager wires a Manager. locks is the SHARED per-container KeyedMutex so
 // stack mutations serialize with user actions + supervision on the same id.
 func NewManager(store Store, eng Engine, locks *idlock.KeyedMutex) *Manager {
-	return &Manager{store: store, exec: NewExecutor(eng, locks), eng: eng}
+	exec := NewExecutor(eng, locks)
+	exec.specs = store // persist/restore authoritative RunSpecs for byte-perfect rollback
+	return &Manager{store: store, exec: exec, eng: eng}
 }
 
 // Member is one container belonging to a stack, summarised for the UI. The IP is
