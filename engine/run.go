@@ -252,6 +252,51 @@ func (e *CLIEngine) CreateNetwork(ctx context.Context, name string) error {
 	return err
 }
 
+// NetworkSpec is the user-facing network-create surface (Phase 11) — exactly the
+// flags `container network create` exposes (captured): name + optional subnet,
+// IPv6 subnet, internal, labels, options. No driver/gateway/--ipv6 toggle exist.
+type NetworkSpec struct {
+	Name     string
+	Subnet   string            // --subnet CIDR ("" → runtime auto-assigns)
+	SubnetV6 string            // --subnet-v6 prefix
+	Internal bool              // --internal (host-only)
+	Labels   map[string]string // --label k=v (sorted)
+	Options  map[string]string // --option k=v (sorted)
+}
+
+// networkCreateArgs builds the argv for a NetworkSpec. Set flags only; map-valued
+// flags emit in sorted key order for determinism.
+func networkCreateArgs(spec NetworkSpec) []string {
+	args := []string{"network", "create"}
+	if spec.Subnet != "" {
+		args = append(args, "--subnet", spec.Subnet)
+	}
+	if spec.SubnetV6 != "" {
+		args = append(args, "--subnet-v6", spec.SubnetV6)
+	}
+	if spec.Internal {
+		args = append(args, "--internal")
+	}
+	for _, k := range sortedKeys(spec.Labels) {
+		args = append(args, "--label", k+"="+spec.Labels[k])
+	}
+	for _, k := range sortedKeys(spec.Options) {
+		args = append(args, "--option", k+"="+spec.Options[k])
+	}
+	args = append(args, spec.Name)
+	return args
+}
+
+// NetworkCreate creates a network from a spec and returns the resulting Network
+// (re-read via inspect, so the caller sees the auto-assigned subnet/gateway). A
+// name collision surfaces as a name_conflict CLIError.
+func (e *CLIEngine) NetworkCreate(ctx context.Context, spec NetworkSpec) (Network, error) {
+	if _, err := e.run(ctx, networkCreateArgs(spec)...); err != nil {
+		return Network{}, err
+	}
+	return e.InspectNetwork(ctx, spec.Name)
+}
+
 // RemoveNetwork deletes a network (`container network delete <name>`). Used on
 // stack down (best-effort — a network still in use will error).
 func (e *CLIEngine) RemoveNetwork(ctx context.Context, name string) error {

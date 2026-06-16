@@ -46,6 +46,8 @@ func statusFor(kind engine.ErrorKind) int {
 		return http.StatusUnprocessableEntity // 422 — image not found or inaccessible
 	case engine.ErrVolumeInUse:
 		return http.StatusConflict // 409 — volume mounted by a container
+	case engine.ErrNetworkInUse:
+		return http.StatusConflict // 409 — network has attached containers
 	case engine.ErrRegistryLoginFailed:
 		return http.StatusUnauthorized // 401 — the registry rejected the credentials
 	default:

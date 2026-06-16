@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createContainer, getImages } from '../api/rest'
 import type { CreateSpec, Image, Network } from '../api/types'
 import { showToast } from '../lib/toast'
+import { CreateNetworkForm } from './CreateNetworkForm'
 import {
   HealthFields,
   emptyHealth,
@@ -72,6 +73,7 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
   const [capDrop, setCapDrop] = useState<string[]>([])
   const [tmpfs, setTmpfs] = useState<string[]>([])
   const [shmSize, setShmSize] = useState('')
+  const [showCreateNet, setShowCreateNet] = useState(false)
 
   const [progress, setProgress] = useState<ProgressState>(null)
   const [lines, setLines] = useState<string[]>([]) // streaming pull/start status (hung-vs-slow visibility)
@@ -392,7 +394,15 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="mb-0.5 block font-mono text-2xs text-neutral-500">network</label>
-            <select value={network} onChange={(e) => setNetwork(e.target.value)} aria-label="network" className={field}>
+            <select
+              value={network}
+              onChange={(e) => {
+                if (e.target.value === '__new__') setShowCreateNet(true)
+                else setNetwork(e.target.value)
+              }}
+              aria-label="network"
+              className={field}
+            >
               <option value="">default</option>
               {networks
                 .filter((n) => n.configuration.name !== 'default')
@@ -401,6 +411,11 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
                     {n.configuration.name}
                   </option>
                 ))}
+              {/* a just-created network may not be in the prop yet — keep it selectable */}
+              {network && network !== 'default' && !networks.some((n) => n.configuration.name === network) && (
+                <option value={network}>{network}</option>
+              )}
+              <option value="__new__">+ new network…</option>
             </select>
           </div>
           <div className="grid grid-cols-2 gap-1">
@@ -597,6 +612,13 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
           </button>
         </div>
       </div>
+
+      {showCreateNet && (
+        <CreateNetworkForm
+          onClose={() => setShowCreateNet(false)}
+          onCreated={(net) => setNetwork(net.configuration.name)}
+        />
+      )}
     </div>
   )
 }

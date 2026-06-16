@@ -21,8 +21,11 @@ type fakeResources struct {
 	volRemoveErr error
 	prune        engine.PruneResult
 
-	prunedKinds []string
-	imgRemoved  []string
+	prunedKinds  []string
+	imgRemoved   []string
+	netCreateErr error
+	netRemoveErr error
+	createdNet   engine.NetworkSpec
 }
 
 func (f *fakeResources) ImageList(context.Context) ([]engine.Image, error)   { return f.images, nil }
@@ -60,6 +63,18 @@ func (f *fakeResources) ContainerPrune(context.Context) (engine.PruneResult, err
 	f.prunedKinds = append(f.prunedKinds, "containers")
 	return f.prune, nil
 }
+func (f *fakeResources) NetworkCreate(_ context.Context, spec engine.NetworkSpec) (engine.Network, error) {
+	f.createdNet = spec
+	if f.netCreateErr != nil {
+		return engine.Network{}, f.netCreateErr
+	}
+	n := engine.Network{ID: spec.Name}
+	n.Configuration.Name = spec.Name
+	n.Status.IPv4Subnet = "192.168.66.0/24" // simulate the auto-assigned subnet
+	n.Status.IPv4Gateway = "192.168.66.1"
+	return n, nil
+}
+func (f *fakeResources) RemoveNetwork(context.Context, string) error { return f.netRemoveErr }
 
 var _ ResourceEngine = (*fakeResources)(nil)
 

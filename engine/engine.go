@@ -99,6 +99,7 @@ const (
 	ErrUnknownOption       ErrorKind = "unknown_option"
 	ErrImagePullFailed     ErrorKind = "image_pull_failed"
 	ErrVolumeInUse         ErrorKind = "volume_in_use"
+	ErrNetworkInUse        ErrorKind = "network_in_use"
 	ErrRegistryLoginFailed ErrorKind = "registry_login_failed"
 )
 
@@ -166,6 +167,15 @@ func classify(stderr string) (ErrorKind, string) {
 	// name_conflict, verified: `Error: container with id web already exists`.
 	case strings.Contains(low, "already exists"):
 		return ErrNameConflict, line
+	// network_in_use, verified from deleting a network with an attached container
+	// (network capture NW-C):
+	//   failed to delete network: [..."error": invalidState: "cannot delete subnet
+	//   nw-use with referring containers: nw-c"...]
+	// MUST precede the invalid_state case below — the refusal also contains
+	// "invalidstate:", so without this it would misclassify. The message names the
+	// referring container(s), mirroring volume_in_use.
+	case strings.Contains(full, "referring container"):
+		return ErrNetworkInUse, networkInUseMessage(stderr)
 	// invalid_state, verified from deleting a running container:
 	//   `internalError: ... (cause: "invalidState: "container web is running
 	//    and can not be deleted"")`. Distinct from not_running (that is exec on a
@@ -188,6 +198,29 @@ func classify(stderr string) (ErrorKind, string) {
 	default:
 		return ErrUnknown, line
 	}
+}
+
+// networkInUseMessage extracts the referring container name(s) from a network-
+// delete refusal ("…with referring containers: nw-c") so the UI can name them,
+// like volume_in_use. Falls back to a generic message if the names can't be read.
+func networkInUseMessage(stderr string) string {
+	const marker = "referring containers:"
+	i := strings.Index(strings.ToLower(stderr), marker)
+	if i < 0 {
+		return "network is in use by a container"
+	}
+	rest := strings.TrimSpace(stderr[i+len(marker):])
+	// The list ends at the first closing quote / bracket / newline.
+	for _, stop := range []string{`"`, "]", "\n"} {
+		if j := strings.Index(rest, stop); j >= 0 {
+			rest = rest[:j]
+		}
+	}
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "network is in use by a container"
+	}
+	return "network is in use by " + rest
 }
 
 // firstErrorLine returns the first line beginning with "Error:" (trimmed), or

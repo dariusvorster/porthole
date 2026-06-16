@@ -419,6 +419,16 @@ export interface AnnotatedNetwork extends Network {
   memberCount: number
 }
 
+/** Network-create form body (Phase 11) — matches container's flags. */
+export interface NetworkCreateSpec {
+  name: string
+  subnet?: string
+  subnetV6?: string
+  internal?: boolean
+  labels?: Record<string, string>
+  options?: Record<string, string>
+}
+
 export interface ResourceBundle {
   summary: DiskUsage
   images: AnnotatedImage[]

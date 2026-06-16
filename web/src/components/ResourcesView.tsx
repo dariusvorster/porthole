@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   MutationError,
   deleteImage,
+  deleteNetwork,
   deleteVolume,
   pruneApply,
   prunePreview,
@@ -10,6 +11,7 @@ import {
 import type { AnnotatedNetwork, AnnotatedVolume, DiskUsage, PrunePlan, ResourceBundle } from '../api/types'
 import { formatBytes } from '../lib/format'
 import { showToast } from '../lib/toast'
+import { CreateNetworkForm } from './CreateNetworkForm'
 import { EmptyState } from './EmptyState'
 import { StatusDot } from './StatusDot'
 
@@ -41,6 +43,7 @@ export function ResourcesView({ bundle, liveDiskUsage, onChanged }: ResourcesVie
   const [confirmImg, setConfirmImg] = useState<{ ref: string; warn: string } | null>(null)
   const [pullRef, setPullRef] = useState('')
   const [pullPhase, setPullPhase] = useState<string | null>(null)
+  const [showCreateNet, setShowCreateNet] = useState(false)
 
   if (!bundle) {
     return <div className="p-4 font-mono text-2xs text-neutral-400">loading resources…</div>
@@ -232,11 +235,27 @@ export function ResourcesView({ bundle, liveDiskUsage, onChanged }: ResourcesVie
       </Section>
 
       {/* networks */}
-      <Section title="networks" prune={<button type="button" onClick={() => startPrune('networks')} className={btn}>prune unused</button>}>
+      <Section
+        title="networks"
+        prune={
+          <span className="flex items-center gap-2">
+            <button type="button" onClick={() => setShowCreateNet(true)} className={btn} data-testid="create-network">
+              + create network
+            </button>
+            <button type="button" onClick={() => startPrune('networks')} className={btn}>
+              prune unused
+            </button>
+          </span>
+        }
+      >
         {bundle.networks.map((n) => (
-          <NetworkRow key={n.configuration.name} n={n} />
+          <NetworkRow key={n.configuration.name} n={n} onChanged={onChanged} />
         ))}
       </Section>
+
+      {showCreateNet && (
+        <CreateNetworkForm onClose={() => setShowCreateNet(false)} onCreated={() => onChanged()} />
+      )}
     </div>
   )
 }
@@ -299,19 +318,59 @@ function VolumeRow({ v, onDelete }: { v: AnnotatedVolume; onDelete: () => void }
   )
 }
 
-function NetworkRow({ n }: { n: AnnotatedNetwork }) {
+function NetworkRow({ n, onChanged }: { n: AnnotatedNetwork; onChanged: () => void }) {
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const onDelete = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await deleteNetwork(n.configuration.name)
+      showToast(`Deleted network ${n.configuration.name}`)
+      onChanged()
+    } catch (e) {
+      // network_in_use names the attached container; show it friendly.
+      setError(
+        e instanceof MutationError
+          ? e.kind === 'network_in_use'
+            ? `Can't delete ${n.configuration.name}: ${e.message}. Stop or remove it first.`
+            : e.message
+          : String(e),
+      )
+      setConfirm(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="flex items-center gap-2 rounded border-hairline border-neutral-300/70 px-2 py-1 dark:border-neutral-700/70">
-      <span className="font-mono text-2xs">{n.configuration.name}</span>
-      <span className="font-mono text-2xs text-neutral-500">{n.status.ipv4Subnet || '—'}</span>
-      <span className="font-mono text-2xs text-neutral-400">{n.memberCount} members</span>
-      <span className="ml-auto">
-        {n.protected ? (
-          <Badge kind="neutral">builtin · protected</Badge>
-        ) : (
-          <span className="font-mono text-2xs text-neutral-400">—</span>
-        )}
-      </span>
+    <div className="rounded border-hairline border-neutral-300/70 px-2 py-1 dark:border-neutral-700/70">
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-2xs">{n.configuration.name}</span>
+        <span className="font-mono text-2xs text-neutral-500">{n.status.ipv4Subnet || '—'}</span>
+        <span className="font-mono text-2xs text-neutral-400">{n.memberCount} members</span>
+        <span className="ml-auto">
+          {n.protected ? (
+            <Badge kind="neutral">builtin · protected</Badge>
+          ) : confirm ? (
+            <span className="flex items-center gap-1.5 font-mono text-2xs">
+              <button type="button" onClick={onDelete} disabled={busy} className={dangerBtn}>
+                {busy ? 'deleting…' : 'confirm delete'}
+              </button>
+              <button type="button" onClick={() => setConfirm(false)} className={btn}>
+                cancel
+              </button>
+            </span>
+          ) : (
+            <button type="button" onClick={() => setConfirm(true)} className={dangerBtn} data-testid={`del-net-${n.configuration.name}`}>
+              delete
+            </button>
+          )}
+        </span>
+      </div>
+      {error && <div className="mt-1 font-mono text-2xs text-status-danger">{error}</div>}
     </div>
   )
 }

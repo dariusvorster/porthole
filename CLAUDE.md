@@ -296,6 +296,22 @@ forced by capture: id==name strict + NO rename → create-then-swap can't end cl
   confirm). Rolling: one service at a time, each isolated — a rollback in one
   doesn't cascade. Explicit apply only, never auto. Recreate only, not orphan.
 
+## Network management (Phase 11 / post-v0.2)
+Create networks from the UI + safe delete. container's flags (NOT Docker's):
+create <name> + --subnet (CIDR), IPv6 subnet, --internal, --label, --option. No
+driver/mode (implicitly nat), no gateway, no --ipv6 toggle. Form = name + Advanced
+(subnet/v6/internal/labels/options). Reuses the existing Network object (no new
+shape), the label "+ add" rows, the Advanced-disclosure pattern, and the
+volume-in-use typed-error pattern.
+- Bare create auto-assigns next free subnet+gateway → show it after create.
+- name_conflict typed error on collision. network_in_use typed error on
+  delete-while-attached (runtime names the referring container — surface it, like
+  volumes). Builtin default network (com.apple.container.resource.role=builtin) →
+  NO delete control.
+- Two entry points, one form component: Resources network section ("Create
+  network") + an inline "+ new network" in the container create-form dropdown
+  (refresh + select after create). CIDR validated client-side.
+
 ---
 
 # context-mode — MANDATORY routing rules

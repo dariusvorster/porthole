@@ -183,6 +183,8 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("DELETE /api/images", s.gate(s.handleImageDelete))
 		s.mux.HandleFunc("POST /api/images/tag", s.gate(s.handleImageTag))
 		s.mux.HandleFunc("POST /api/images/pull", s.gate(s.handleImagePull))
+		s.mux.HandleFunc("POST /api/networks", s.gate(s.handleNetworkCreate))
+		s.mux.HandleFunc("DELETE /api/networks/{id}", s.gate(s.handleNetworkDelete))
 	}
 
 	// Registry login (Phase 7) — the secret-handling feature. Gated + browser-

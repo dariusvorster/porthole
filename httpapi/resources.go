@@ -24,6 +24,8 @@ type ResourceEngine interface {
 	VolumePrune(ctx context.Context) (engine.PruneResult, error)
 	NetworkPrune(ctx context.Context) (engine.PruneResult, error)
 	ContainerPrune(ctx context.Context) (engine.PruneResult, error)
+	NetworkCreate(ctx context.Context, spec engine.NetworkSpec) (engine.Network, error)
+	RemoveNetwork(ctx context.Context, name string) error
 }
 
 // resourceBundle is the GET /api/resources response: the df summary + annotated
@@ -125,6 +127,47 @@ func (s *Server) handlePrune(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVolumeDelete(w http.ResponseWriter, r *http.Request) {
 	if err := s.res.VolumeRemove(r.Context(), r.PathValue("name")); err != nil {
 		writeError(w, err) // ErrVolumeInUse → 409
+		return
+	}
+	s.emitResource()
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// POST /api/networks — create a network (Phase 11). Returns the created Network
+// object (re-read), so the UI can show the auto-assigned subnet/gateway. A name
+// collision is the typed name_conflict (409). Gated + browser-guarded.
+func (s *Server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name     string            `json:"name"`
+		Subnet   string            `json:"subnet"`
+		SubnetV6 string            `json:"subnetV6"`
+		Internal bool              `json:"internal"`
+		Labels   map[string]string `json:"labels"`
+		Options  map[string]string `json:"options"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, errorEnvelope{Error: errorBody{
+			Kind: string(engine.ErrUnknownOption), Message: "network name is required",
+		}})
+		return
+	}
+	net, err := s.res.NetworkCreate(r.Context(), engine.NetworkSpec{
+		Name: req.Name, Subnet: req.Subnet, SubnetV6: req.SubnetV6,
+		Internal: req.Internal, Labels: req.Labels, Options: req.Options,
+	})
+	if err != nil {
+		writeError(w, err) // name_conflict → 409
+		return
+	}
+	s.emitResource() // a new network changes the resource lists + the create-form dropdown
+	writeJSON(w, http.StatusCreated, net)
+}
+
+// DELETE /api/networks/{id} — remove a network. Refused by the runtime when a
+// container is still attached → typed network_in_use (409) naming the referrer.
+func (s *Server) handleNetworkDelete(w http.ResponseWriter, r *http.Request) {
+	if err := s.res.RemoveNetwork(r.Context(), r.PathValue("id")); err != nil {
+		writeError(w, err) // ErrNetworkInUse → 409, names the attached container
 		return
 	}
 	s.emitResource()

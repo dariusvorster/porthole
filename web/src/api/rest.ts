@@ -6,6 +6,7 @@ import type {
   CreateSpec,
   Image,
   Network,
+  NetworkCreateSpec,
   PrunePlan,
   PruneResult,
   RegistryAuth,
@@ -32,6 +33,17 @@ export function getVersion(): Promise<VersionEntry[]> {
 
 export function getNetworks(): Promise<Network[]> {
   return getJSON<Network[]>('/api/networks')
+}
+
+/** Create a network (Phase 11). Returns the created Network (with the auto-assigned
+ * subnet/gateway). Throws MutationError on non-2xx (e.g. name_conflict). */
+export function createNetwork(spec: NetworkCreateSpec): Promise<Network> {
+  return postJSON<Network>('/api/networks', spec)
+}
+
+/** Delete a network; rejects MutationError(kind=network_in_use) when attached. */
+export function deleteNetwork(name: string): Promise<void> {
+  return mutate(`/api/networks/${id(name)}`, 'DELETE')
 }
 
 /** Full inspect of one container — backs the inspector's "raw" disclosure. */
