@@ -429,6 +429,15 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
                 --read-only
               </label>
             </div>
+            {readOnly && (
+              <p
+                className="rounded border-hairline border-status-warn/40 bg-status-warn/5 px-2 py-1 font-sans text-2xs text-neutral-600 dark:text-neutral-300"
+                data-testid="readonly-hint"
+              >
+                Read-only root filesystem — some images need a writable path (e.g. a cache or temp dir). If the
+                container fails to start, add a <span className="font-mono">tmpfs</span> mount below for that path.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="mb-0.5 block font-mono text-2xs text-neutral-500">entrypoint</label>
