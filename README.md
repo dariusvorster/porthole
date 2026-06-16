@@ -171,28 +171,22 @@ The data directory must be writable by the user the agent runs as (it is, by def
 since Porthole runs as you). Supervision policies, stack definitions, and cumulative
 restart counts persist there across restarts.
 
-## Roadmap (v2)
+## Roadmap
 
-v0.1 is a complete single-node console. The following are deliberately deferred — most
-of them are *enhancements*, and the right ones to build next are best decided by real
-use, so feedback on ordering is genuinely welcome:
+Most of the original v2 roadmap has shipped — service discovery, drift remediation,
+health checks at create, richer create flags, registry login, and selectable rows are
+all in. What's left is deliberately deferred, and the right next steps are best decided
+by real use, so feedback on ordering is genuinely welcome:
 
 - **Remote access + authentication** — reach Porthole from another machine (e.g. over
-  Tailscale), gated on auth because of the exec shell surface.
-- **Compose service discovery** — name-based resolution between stack services. The
-  runtime's embedded DNS does *not* resolve container names by default (we tested it), so
-  this means injecting `/etc/hosts` entries that track IPs across restarts.
-- **Destructive drift remediation** — let Stacks *apply* a recreate when a compose file
-  changes, not just detect it.
-- **Health-gated dependency ordering** — start stack services in dependency order, waiting
-  on health.
+  Tailscale), gated on auth because of the exec shell surface. The one large remaining
+  item; held until there's real demand, since it changes the security model.
+- **Health-gated dependency ordering** — start stack services in dependency order,
+  waiting on health (distinct from the health checks Porthole already supports).
 - **`on-failure` restart policy** — currently impossible: the runtime doesn't expose a
   container's exit code, so "restart only on failure" can't be implemented faithfully.
   Tracked upstream.
-- **Richer create form** — health check at create, `--init`, read-only rootfs,
-  capabilities, and create-without-start.
-- **Selectable list rows**, and other quality-of-life touches.
-
+  
 ## How it works
 
 Porthole is a Go daemon (`portholed`) that wraps the `container` CLI — it shells out,
