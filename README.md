@@ -93,8 +93,10 @@ nothing else to deploy.
   with resize support.
 - **Orchestrate** — import a compose file (a documented subset) and bring a multi-service
   app up or down. Per-stack network isolation, supervision wired from `restart:` labels,
-  topology grouping, and **non-destructive** drift detection (it shows you what changed;
-  it never silently recreates).
+  topology grouping, and **service discovery** (stack services resolve each other by name,
+  injected and kept current across restarts). Compose-file drift is detected and shown as
+  a diff; you can **apply** a recreate explicitly — it stops, replaces, and rolls back to
+  the previous version if the new one fails to start, preserving named-volume data.
 - **Reclaim disk** — manage images, volumes, and networks with a preview-then-apply prune.
   Porthole surfaces the **anonymous-volume leak** (orphaned volumes the runtime never
   cleans up on `--rm`) that's otherwise invisible, and reclaims it in one click.
