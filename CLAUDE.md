@@ -255,6 +255,24 @@ injection: no --add-host, no DNS A-records (NXDOMAIN even with a domain), no
 - Pure core: computeHostsBlock / mergeHosts / planInjections (table-tested). Exec
   + hub subscription + debounce + idlock are thin I/O around it.
 
+## Health-at-create + richer create flags (Phase 9 / v2)
+Completes the create form. Additive. Key points:
+- Health is NOT a container run flag (no --health-* exists). Health-at-create
+  wires to Porthole's supervision prober the SAME way restart-at-create does:
+  write the health label/supervision record at create → the existing HTTP/TCP
+  prober adopts it from birth. Reuse the inspector's EXACT health config shape —
+  one health model, two entry points (create + inspector). Keep health OUT of
+  RunSpec/toArgs. (Backend already maps createSpec.Health → porthole.health.*
+  labels, which healthFromLabels adopts — same path as the restart label.)
+- New RunSpec/toArgs flags: --init, --read-only, --entrypoint, --cap-add/--cap-drop
+  (repeated), --tmpfs (repeated), --shm-size. user/workdir already exist in RunSpec.
+- Form layering (don't make a wall): health next to restart (both feed
+  supervision), user/workdir near command; init/read-only/entrypoint/caps/tmpfs/
+  shm behind the existing Advanced disclosure. Repeatable rows reuse the
+  ports/env/volumes "+ add" pattern. Plain-nginx path shows none of the new
+  advanced fields unless opened.
+- Excluded: --rm, --mount, --dns*, arch/os/platform/expert flags.
+
 ---
 
 # context-mode — MANDATORY routing rules

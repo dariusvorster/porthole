@@ -60,6 +60,15 @@ type createSpec struct {
 	Network string            `json:"network"`
 	WorkDir string            `json:"workdir"`
 	User    string            `json:"user"`
+
+	// Richer create flags (Phase 9) — pure passthrough to RunSpec/toArgs.
+	Init       bool     `json:"init"`
+	ReadOnly   bool     `json:"readOnly"`
+	Entrypoint string   `json:"entrypoint"`
+	CapAdd     []string `json:"capAdd"`
+	CapDrop    []string `json:"capDrop"`
+	Tmpfs      []string `json:"tmpfs"`
+	ShmSize    string   `json:"shmSize"`
 }
 
 // errBadCreate marks a client spec error (→ 400).
@@ -110,6 +119,8 @@ func (c createSpec) toRunSpec() (engine.RunSpec, error) {
 		Env: c.Env, EnvFile: c.EnvFile, Labels: labels,
 		Network: c.Network, CPUs: c.CPUs, Memory: c.Memory,
 		WorkDir: c.WorkDir, User: c.User,
+		Init: c.Init, ReadOnly: c.ReadOnly, Entrypoint: c.Entrypoint,
+		CapAdd: c.CapAdd, CapDrop: c.CapDrop, Tmpfs: c.Tmpfs, ShmSize: c.ShmSize,
 	}
 	for _, p := range c.Ports {
 		if p.HostPort < 1 || p.ContainerPort < 1 {

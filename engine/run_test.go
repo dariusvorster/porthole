@@ -73,6 +73,46 @@ func TestToArgs(t *testing.T) {
 	}
 }
 
+func TestToArgsNewFlags(t *testing.T) {
+	spec := RunSpec{
+		Image:      "nginx",
+		Init:       true,
+		ReadOnly:   true,
+		Entrypoint: "/bin/myinit",
+		ShmSize:    "128m",
+		CapAdd:     []string{"NET_RAW", "SYS_TIME"},
+		CapDrop:    []string{"MKNOD"},
+		Tmpfs:      []string{"/run", "/tmp"},
+	}
+	got := strings.Join(spec.toArgs(false), " ")
+	for _, want := range []string{
+		"--init", "--read-only", "--entrypoint /bin/myinit", "--shm-size 128m",
+		"--cap-add NET_RAW", "--cap-add SYS_TIME", "--cap-drop MKNOD",
+		"--tmpfs /run", "--tmpfs /tmp",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("toArgs missing %q in: %s", want, got)
+		}
+	}
+	// Repeated flags emit one arg each.
+	if n := strings.Count(got, "--cap-add"); n != 2 {
+		t.Errorf("expected 2 --cap-add, got %d: %s", n, got)
+	}
+	if n := strings.Count(got, "--tmpfs"); n != 2 {
+		t.Errorf("expected 2 --tmpfs, got %d: %s", n, got)
+	}
+}
+
+func TestToArgsNewFlagsAbsentWhenUnset(t *testing.T) {
+	// A spec with none of the new fields must produce no new flags (no regression).
+	got := strings.Join(RunSpec{Image: "nginx"}.toArgs(false), " ")
+	for _, absent := range []string{"--init", "--read-only", "--entrypoint", "--shm-size", "--cap-add", "--cap-drop", "--tmpfs"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("unset spec should not emit %q, got: %s", absent, got)
+		}
+	}
+}
+
 func TestRunStreamSuccess(t *testing.T) {
 	bin := writeScriptBin(t, `
 echo "[0/6] [0s]" >&2

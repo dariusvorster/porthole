@@ -6,6 +6,7 @@ import type { Container, StatsSample, Supervision } from '../api/types'
 import { useContainerLogs } from '../api/useContainerLogs'
 import { formatUptime, shortId } from '../lib/format'
 import { ExecView } from './ExecView'
+import { HealthFields, healthFromConfig, healthToBody, type HealthDraft } from './HealthFields'
 import { LogsView } from './LogsView'
 import { StatusDot, type StatusKind } from './StatusDot'
 
@@ -388,10 +389,7 @@ function PolicySection({
   const hc = supervision?.healthConfig
   const hcType = hc?.type === 'http' || hc?.type === 'tcp' ? hc.type : 'none'
   const [restart, setRestart] = useState<string>(current)
-  const [htype, setHtype] = useState<'none' | 'http' | 'tcp'>(hcType)
-  const [port, setPort] = useState(hc?.port ? String(hc.port) : '')
-  const [path, setPath] = useState(hc?.path ?? '/')
-  const [interval, setIntervalSecs] = useState(hc?.interval ? String(hc.interval) : '')
+  const [health, setHealth] = useState<HealthDraft>(healthFromConfig(hc))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [saved, setSaved] = useState(false)
@@ -405,10 +403,7 @@ function PolicySection({
   // Pre-fill the health form from the configured probe carried on the event,
   // so it round-trips across reload (not just the restart policy).
   useEffect(() => {
-    setHtype(hcType)
-    setPort(hc?.port ? String(hc.port) : '')
-    setPath(hc?.path ?? '/')
-    setIntervalSecs(hc?.interval ? String(hc.interval) : '')
+    setHealth(healthFromConfig(hc))
   }, [hcType, hc?.port, hc?.path, hc?.interval])
 
   const save = async () => {
@@ -417,14 +412,8 @@ function PolicySection({
     setSaved(false)
     try {
       const body: PolicyBody = { restart }
-      if (htype !== 'none') {
-        body.health = {
-          type: htype,
-          port: Number(port) || 0,
-          path: path || undefined,
-          interval: Number(interval) || undefined,
-        }
-      }
+      const h = healthToBody(health)
+      if (h) body.health = h
       await setPolicy(container.id, body)
       setSaved(true)
     } catch (e) {
@@ -454,36 +443,7 @@ function PolicySection({
           </select>
         </label>
 
-        <label className="flex items-center justify-between gap-2">
-          <span className="text-neutral-500">health</span>
-          <select
-            value={htype}
-            onChange={(e) => setHtype(e.target.value as 'none' | 'http' | 'tcp')}
-            className={inputCls}
-          >
-            <option value="none">none</option>
-            <option value="http">http</option>
-            <option value="tcp">tcp</option>
-          </select>
-        </label>
-        {htype !== 'none' && (
-          <>
-            <label className="flex items-center justify-between gap-2">
-              <span className="text-neutral-500">port</span>
-              <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" placeholder="80" className={inputCls} />
-            </label>
-            {htype === 'http' && (
-              <label className="flex items-center justify-between gap-2">
-                <span className="text-neutral-500">path</span>
-                <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/" className={inputCls} />
-              </label>
-            )}
-            <label className="flex items-center justify-between gap-2">
-              <span className="text-neutral-500">interval s</span>
-              <input value={interval} onChange={(e) => setIntervalSecs(e.target.value)} inputMode="numeric" placeholder="30" className={inputCls} />
-            </label>
-          </>
-        )}
+        <HealthFields value={health} onChange={setHealth} inputClass={inputCls} />
 
         <div className="flex items-center gap-2 pt-1">
           <button

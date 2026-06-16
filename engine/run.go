@@ -29,6 +29,17 @@ type RunSpec struct {
 	Memory  string            // --memory <n>m (MiB granularity; "" = unset)
 	WorkDir string            // --workdir DIR
 	User    string            // --user NAME|UID[:GID]
+
+	// Richer create flags (Phase 9). Bools emit only when true; strings/slices
+	// only when set. Health is intentionally NOT here — it's a supervision concern
+	// (no --health-* flag exists), wired via porthole.health.* labels.
+	Init       bool     // --init
+	ReadOnly   bool     // --read-only
+	Entrypoint string   // --entrypoint CMD
+	CapAdd     []string // repeated --cap-add CAP
+	CapDrop    []string // repeated --cap-drop CAP
+	Tmpfs      []string // repeated --tmpfs PATH
+	ShmSize    string   // --shm-size SIZE
 }
 
 // toArgs builds the `container run` argv from a RunSpec. progress=true adds
@@ -56,6 +67,27 @@ func (spec RunSpec) toArgs(progress bool) []string {
 	}
 	if spec.User != "" {
 		args = append(args, "--user", spec.User)
+	}
+	if spec.Init {
+		args = append(args, "--init")
+	}
+	if spec.ReadOnly {
+		args = append(args, "--read-only")
+	}
+	if spec.Entrypoint != "" {
+		args = append(args, "--entrypoint", spec.Entrypoint)
+	}
+	if spec.ShmSize != "" {
+		args = append(args, "--shm-size", spec.ShmSize)
+	}
+	for _, c := range spec.CapAdd {
+		args = append(args, "--cap-add", c)
+	}
+	for _, c := range spec.CapDrop {
+		args = append(args, "--cap-drop", c)
+	}
+	for _, t := range spec.Tmpfs {
+		args = append(args, "--tmpfs", t)
 	}
 	for _, k := range sortedKeys(spec.Labels) {
 		args = append(args, "--label", k+"="+spec.Labels[k])

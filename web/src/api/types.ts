@@ -345,6 +345,14 @@ export interface CreateSpec {
   network?: string
   workdir?: string
   user?: string
+  // Richer create flags (Phase 9).
+  init?: boolean
+  readOnly?: boolean
+  entrypoint?: string
+  capAdd?: string[]
+  capDrop?: string[]
+  tmpfs?: string[]
+  shmSize?: string
 }
 
 /** Events from the create SSE stream (run auto-pulls + blocks). */

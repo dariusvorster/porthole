@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { createContainer, getImages } from '../api/rest'
 import type { CreateSpec, Image, Network } from '../api/types'
 import { showToast } from '../lib/toast'
+import {
+  HealthFields,
+  emptyHealth,
+  healthToBody,
+  validateHealth,
+  type HealthDraft,
+} from './HealthFields'
 
 interface CreateFormProps {
   networks: Network[]
@@ -31,6 +38,8 @@ const field =
   'w-full rounded border-hairline border-neutral-300/70 bg-neutral-100/60 px-1.5 py-1 font-mono text-2xs dark:border-neutral-700/70 dark:bg-neutral-900/60'
 const btn =
   'rounded border-hairline border-neutral-300/70 px-2 py-0.5 font-mono text-2xs hover:bg-neutral-50 disabled:opacity-40 dark:border-neutral-700/70 dark:hover:bg-neutral-900/40'
+const healthInput =
+  'w-28 rounded border-hairline border-neutral-300/70 bg-neutral-100/60 px-1.5 py-0.5 font-mono text-2xs dark:border-neutral-700/70 dark:bg-neutral-900/60'
 
 /**
  * The "Run container" modal (Phase 5). Reuses the proven RunSpec via the create
@@ -53,6 +62,16 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
   const [env, setEnv] = useState<KV[]>([])
   const [volumes, setVolumes] = useState<VolRow[]>([])
   const [labels, setLabels] = useState<KV[]>([])
+  // Health-at-create (Phase 9): the SAME control the inspector uses.
+  const [health, setHealth] = useState<HealthDraft>(emptyHealth())
+  // Richer flags (Advanced).
+  const [init, setInit] = useState(false)
+  const [readOnly, setReadOnly] = useState(false)
+  const [entrypoint, setEntrypoint] = useState('')
+  const [capAdd, setCapAdd] = useState<string[]>([])
+  const [capDrop, setCapDrop] = useState<string[]>([])
+  const [tmpfs, setTmpfs] = useState<string[]>([])
+  const [shmSize, setShmSize] = useState('')
 
   const [progress, setProgress] = useState<ProgressState>(null)
   const [lines, setLines] = useState<string[]>([]) // streaming pull/start status (hung-vs-slow visibility)
@@ -96,6 +115,9 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
       if ((v.source && !v.target) || (!v.source && v.target)) return 'volume needs both source and target'
     }
     if (memory && !/^\d+(\.\d+)?[kmg]?b?$/i.test(memory)) return `invalid memory "${memory}" (e.g. 512m)`
+    if (shmSize && !/^\d+(\.\d+)?[kmg]?b?$/i.test(shmSize)) return `invalid shm-size "${shmSize}" (e.g. 128m)`
+    const hErr = validateHealth(health)
+    if (hErr) return hErr
     return null
   }
 
@@ -115,11 +137,19 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
         .map((p) => ({ hostPort: Number(p.host), containerPort: Number(p.container), proto: p.proto || 'tcp' })),
       volumes: volumes.filter((v) => v.source && v.target).map((v) => ({ source: v.source, target: v.target })),
       restart: restart || undefined,
+      health: healthToBody(health) ?? null,
       cpus: cpus ? Number(cpus) : undefined,
       memory: memory.trim() || undefined,
       network: network || undefined,
       workdir: workdir.trim() || undefined,
       user: user.trim() || undefined,
+      init: init || undefined,
+      readOnly: readOnly || undefined,
+      entrypoint: entrypoint.trim() || undefined,
+      capAdd: capAdd.map((c) => c.trim()).filter(Boolean),
+      capDrop: capDrop.map((c) => c.trim()).filter(Boolean),
+      tmpfs: tmpfs.map((t) => t.trim()).filter(Boolean),
+      shmSize: shmSize.trim() || undefined,
     }
   }
 
@@ -226,6 +256,18 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
           />
         </div>
 
+        {/* user + workdir — common, process-related (primary, not advanced) */}
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="mb-0.5 block font-mono text-2xs text-neutral-500">user</label>
+            <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="1000 or name" aria-label="user" className={field} />
+          </div>
+          <div>
+            <label className="mb-0.5 block font-mono text-2xs text-neutral-500">workdir</label>
+            <input value={workdir} onChange={(e) => setWorkdir(e.target.value)} placeholder="/app" aria-label="workdir" className={field} />
+          </div>
+        </div>
+
         {/* ports */}
         <Repeatable
           title="ports"
@@ -324,8 +366,8 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
           )}
         />
 
-        {/* restart + resources + network */}
-        <div className="grid grid-cols-3 gap-2">
+        {/* supervision: restart + health — both feed Porthole's supervisor */}
+        <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="mb-0.5 block font-mono text-2xs text-neutral-500">restart</label>
             <select value={restart} onChange={(e) => setRestart(e.target.value)} aria-label="restart" className={field}>
@@ -334,6 +376,20 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
               <option value="unless-stopped">unless-stopped</option>
             </select>
           </div>
+          <div>
+            <label className="mb-0.5 block font-mono text-2xs text-neutral-500">health check</label>
+            <div
+              className="space-y-1 rounded border-hairline border-neutral-300/70 p-1.5 dark:border-neutral-700/70"
+              data-testid="create-health"
+            >
+              <HealthFields value={health} onChange={setHealth} inputClass={healthInput} />
+              <p className="font-mono text-2xs text-neutral-400">Probed by Porthole — adopted from birth, like restart.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* network + resources */}
+        <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="mb-0.5 block font-mono text-2xs text-neutral-500">network</label>
             <select value={network} onChange={(e) => setNetwork(e.target.value)} aria-label="network" className={field}>
@@ -359,18 +415,75 @@ export function CreateForm({ networks, onClose, onCreated, onOpenRegistry }: Cre
           </div>
         </div>
 
-        {/* advanced */}
+        {/* advanced — opt-in runtime flags; hidden unless opened */}
         <details>
           <summary className="cursor-pointer font-mono text-2xs text-neutral-500">advanced</summary>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-0.5 block font-mono text-2xs text-neutral-500">workdir</label>
-              <input value={workdir} onChange={(e) => setWorkdir(e.target.value)} aria-label="workdir" className={field} />
+          <div className="mt-2 space-y-2">
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-1.5 font-mono text-2xs text-neutral-600 dark:text-neutral-300">
+                <input type="checkbox" checked={init} onChange={(e) => setInit(e.target.checked)} aria-label="init" />
+                --init
+              </label>
+              <label className="flex items-center gap-1.5 font-mono text-2xs text-neutral-600 dark:text-neutral-300">
+                <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} aria-label="read-only" />
+                --read-only
+              </label>
             </div>
-            <div>
-              <label className="mb-0.5 block font-mono text-2xs text-neutral-500">user</label>
-              <input value={user} onChange={(e) => setUser(e.target.value)} aria-label="user" className={field} />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-0.5 block font-mono text-2xs text-neutral-500">entrypoint</label>
+                <input value={entrypoint} onChange={(e) => setEntrypoint(e.target.value)} placeholder="/bin/sh" aria-label="entrypoint" className={field} />
+              </div>
+              <div>
+                <label className="mb-0.5 block font-mono text-2xs text-neutral-500">shm-size</label>
+                <input value={shmSize} onChange={(e) => setShmSize(e.target.value)} placeholder="128m" aria-label="shm-size" className={field} />
+              </div>
             </div>
+            <Repeatable
+              title="cap-add"
+              rows={capAdd}
+              onAdd={() => setCapAdd([...capAdd, ''])}
+              onRemove={(i) => setCapAdd(capAdd.filter((_, j) => j !== i))}
+              render={(c, i) => (
+                <input
+                  value={c}
+                  onChange={(e) => setCapAdd(capAdd.map((v, j) => (j === i ? e.target.value : v)))}
+                  placeholder="NET_RAW"
+                  aria-label="cap-add"
+                  className={field}
+                />
+              )}
+            />
+            <Repeatable
+              title="cap-drop"
+              rows={capDrop}
+              onAdd={() => setCapDrop([...capDrop, ''])}
+              onRemove={(i) => setCapDrop(capDrop.filter((_, j) => j !== i))}
+              render={(c, i) => (
+                <input
+                  value={c}
+                  onChange={(e) => setCapDrop(capDrop.map((v, j) => (j === i ? e.target.value : v)))}
+                  placeholder="MKNOD"
+                  aria-label="cap-drop"
+                  className={field}
+                />
+              )}
+            />
+            <Repeatable
+              title="tmpfs"
+              rows={tmpfs}
+              onAdd={() => setTmpfs([...tmpfs, ''])}
+              onRemove={(i) => setTmpfs(tmpfs.filter((_, j) => j !== i))}
+              render={(t, i) => (
+                <input
+                  value={t}
+                  onChange={(e) => setTmpfs(tmpfs.map((v, j) => (j === i ? e.target.value : v)))}
+                  placeholder="/run"
+                  aria-label="tmpfs"
+                  className={field}
+                />
+              )}
+            />
           </div>
         </details>
 

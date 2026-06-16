@@ -139,6 +139,68 @@ func TestCreateImagePullFailed(t *testing.T) {
 	}
 }
 
+func TestCreateMapsNewFlags(t *testing.T) {
+	cr := &fakeCreator{updates: []engine.RunUpdate{{Kind: "created", ID: "svc"}}}
+	srv := createServer(upEngine(), cr, &recordingSup{})
+
+	body := `{"image":"nginx","name":"svc","init":true,"readOnly":true,"entrypoint":"/bin/myinit",
+		"capAdd":["NET_RAW"],"capDrop":["MKNOD"],"tmpfs":["/run","/tmp"],"shmSize":"128m",
+		"user":"1000","workdir":"/app"}`
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, postJSON("/api/containers", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	s := cr.lastSpec
+	if !s.Init || !s.ReadOnly || s.Entrypoint != "/bin/myinit" || s.ShmSize != "128m" {
+		t.Errorf("scalar flags not mapped: %+v", s)
+	}
+	if len(s.CapAdd) != 1 || s.CapAdd[0] != "NET_RAW" || len(s.CapDrop) != 1 || s.CapDrop[0] != "MKNOD" {
+		t.Errorf("caps not mapped: %+v", s)
+	}
+	if len(s.Tmpfs) != 2 || s.Tmpfs[0] != "/run" || s.User != "1000" || s.WorkDir != "/app" {
+		t.Errorf("tmpfs/user/workdir not mapped: %+v", s)
+	}
+}
+
+func TestCreateHealthWritesSupervisionLabels(t *testing.T) {
+	cr := &fakeCreator{updates: []engine.RunUpdate{{Kind: "created", ID: "svc"}}}
+	srv := createServer(upEngine(), cr, &recordingSup{})
+
+	body := `{"image":"nginx","name":"svc","health":{"type":"http","port":80,"path":"/healthz","interval":15}}`
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, postJSON("/api/containers", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	// Health-at-create writes the SAME porthole.health.* labels the supervisor
+	// adopts via healthFromLabels — the create-side of "one model, two entry points".
+	l := cr.lastSpec.Labels
+	if l["porthole.health.type"] != "http" || l["porthole.health.port"] != "80" ||
+		l["porthole.health.path"] != "/healthz" || l["porthole.health.interval"] != "15" {
+		t.Errorf("health labels not written: %v", l)
+	}
+}
+
+func TestCreateNoHealthNoFlags(t *testing.T) {
+	cr := &fakeCreator{updates: []engine.RunUpdate{{Kind: "created", ID: "svc"}}}
+	srv := createServer(upEngine(), cr, &recordingSup{})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, postJSON("/api/containers", `{"image":"nginx","name":"svc"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	s := cr.lastSpec
+	if s.Init || s.ReadOnly || s.Entrypoint != "" || s.ShmSize != "" || len(s.CapAdd) != 0 || len(s.Tmpfs) != 0 {
+		t.Errorf("unset create should carry no new flags: %+v", s)
+	}
+	for k := range s.Labels {
+		if strings.HasPrefix(k, "porthole.health.") {
+			t.Errorf("no health config should write no health labels, got %v", s.Labels)
+		}
+	}
+}
+
 func TestCreateInvalidSpec(t *testing.T) {
 	srv := createServer(upEngine(), &fakeCreator{}, &recordingSup{})
 	rec := httptest.NewRecorder()
